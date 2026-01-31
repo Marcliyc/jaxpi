@@ -12,11 +12,13 @@ def get_config():
     # Weights & Biases
     config.wandb = wandb = ml_collections.ConfigDict()
     wandb.project = "PINN-Stokes"
-    wandb.name = "sota"
+    wandb.name = "sota-cheat"
     wandb.tag = None
 
     # Nondimensionalization
     config.nondim = True
+
+    config.cheat = True
 
     # Constraints
     config.bc_constraints = "soft"  # "hard" or "soft" or "hybrid"
@@ -26,7 +28,7 @@ def get_config():
     arch.arch_name = "ModifiedMlp"
     arch.num_layers = 4
     arch.hidden_dim = 256
-    arch.out_dim = 3
+    arch.out_dim = 2 # u,v, not p
     arch.activation = "gelu"  # gelu works better than tanh
     arch.periodicity = None
     arch.fourier_emb = ml_collections.ConfigDict(

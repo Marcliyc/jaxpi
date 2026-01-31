@@ -172,7 +172,9 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
     print("Waiting for JIT...")
     start_time = time.time()
     for step in range(config.training.max_steps):
+        #print("Step: ", step)
         batch = next(res_sampler)
+        #print("Batch: ", batch)
         model.state = model.step(model.state, batch)
 
         # Update weights if necessary
@@ -185,6 +187,8 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
             if step % config.logging.log_every_steps == 0:
                 # Get the first replica of the state and batch
                 state = jax.device_get(tree_map(lambda x: x[0], model.state))
+                # if config.cheat:
+                #     batch,_,_,_ = batch
                 batch = jax.device_get(tree_map(lambda x: x[0], batch))
                 log_dict = evaluator(state, batch, coords, u_ref, v_ref)
                 wandb.log(log_dict, step)

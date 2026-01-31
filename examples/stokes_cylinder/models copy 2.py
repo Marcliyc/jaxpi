@@ -441,6 +441,7 @@ class Stokes2DHardBCCheat(Stokes2DCheat):
         3. The Bottom Wall
         """
         # A. Cylinder Distance (Algebraic)
+        # Normalized by L^2 to keep values manageable (~order 1)
         phi = 1.0
         if self.cylinder_dist:
             if self.config.cyl_alpha > 0:
@@ -452,6 +453,7 @@ class Stokes2DHardBCCheat(Stokes2DCheat):
             phi = phi * phi_cyl
 
         # B. Wall Distance (Parabolic profile vanishing at y_min and y_max)
+        # Normalized by W^2
         if self.wall_dist:
             phi_wall = ((y - self.y_min) * (self.y_max - y)) / (self.W**2)
             phi = phi * phi_wall
@@ -553,11 +555,11 @@ class Stokes2DHardBC(Stokes2D):
         super().__init__(config,u_inflow,inflow_coords,outflow_coords,wall_coords,cylinder_coords,Re)
 
         # --- Geometry Setup ---
-        self.xc = cylinder_center[0]
-        self.yc = cylinder_center[1]
-        #self.xc, self.yc = cylinder_coords.mean(axis=0)
-        self.R = cylinder_radius
-        #self.R = jnp.sqrt(jnp.mean((cylinder_coords[:,0]-self.xc)**2 + (cylinder_coords[:,1]-self.yc)**2))
+        #self.xc = cylinder_center[0]
+        #self.yc = cylinder_center[1]
+        self.xc, self.yc = cylinder_coords.mean(axis=0)
+        #self.R = cylinder_radius
+        self.R = jnp.sqrt(jnp.mean((cylinder_coords[:,0]-self.xc)**2 + (cylinder_coords[:,1]-self.yc)**2))
         self.cylinder_dist = cylinder_dist
         self.wall_dist = wall_dist
 
@@ -578,6 +580,7 @@ class Stokes2DHardBC(Stokes2D):
         3. The Bottom Wall
         """
         # A. Cylinder Distance (Algebraic)
+        # Normalized by L^2 to keep values manageable (~order 1)
         phi = 1.0
         if self.cylinder_dist:
             if self.config.cyl_alpha > 0:
@@ -589,16 +592,16 @@ class Stokes2DHardBC(Stokes2D):
             phi = phi * phi_cyl
 
         # B. Wall Distance (Parabolic profile vanishing at y_min and y_max)
+        # Normalized by W^2
         if self.wall_dist:
             phi_wall = ((y - self.y_min) * (self.y_max - y)) / (self.W**2)
             phi = phi * phi_wall
 
-        # C. Combine with R-Function if both distances are used
         if self.cylinder_dist and self.wall_dist:
             m = self.config.get("phi_m", 2.0)
             phi = phi_cyl*phi_wall*(phi_cyl**m+phi_wall**m)**(-1/m)
-
-        return phi
+        # C. Combine
+        return phi# * phi_wall
     
     def neural_net(self, params, x, y):
         x_norm = x / self.L  # rescale x into [0, 1]
@@ -615,6 +618,9 @@ class Stokes2DHardBC(Stokes2D):
     @partial(jit, static_argnums=(0,))
     def losses(self, params, batch):
         # 1. Inflow Loss (Dirichlet, Soft)
+        # Note: Even though we have hard wall constraints, the Inflow at x=0
+        # is distinct. The phi function is non-zero at x=0 (mostly), 
+        # so the network can learn the inflow parabola.
         u_in_pred = self.u_pred_fn(params, self.inflow_coords[:, 0], self.inflow_coords[:, 1])
         v_in_pred = self.v_pred_fn(params, self.inflow_coords[:, 0], self.inflow_coords[:, 1])
         u_in_loss = jnp.mean((u_in_pred - self.u_in) ** 2)
@@ -670,7 +676,7 @@ class Stokes2DHardBC(Stokes2D):
 
         return loss_dict
     
-class Stokes2DHardAll(Stokes2D): # Apart from Wall and Cylinder boundary, also hard-constrains Outflow and inflow
+class Stokes2DHardAll(Stokes2D):
     def __init__(
         self,
         config,
@@ -686,21 +692,18 @@ class Stokes2DHardAll(Stokes2D): # Apart from Wall and Cylinder boundary, also h
 
         
         self.hard_outflow = hard_outflow
-        self.u_max = 0.3
+        self.u_max = 0.3#u_inflow_max
 
         # Geometry
+        # self.L = 2.2
+        # self.W = 0.41
         self.xc = cylinder_center[0]
         self.yc = cylinder_center[1]
         self.R = cylinder_radius
 
         # Boundaries
-        self.y_min = wall_coords[:, 1].min()
-        self.y_max = wall_coords[:, 1].max()
-        
-        self.x_min = wall_coords[:, 0].min()
-        self.x_max = wall_coords[:, 0].max()
-        self.L = self.x_max - self.x_min
-        self.W = self.y_max - self.y_min
+        self.x_min, self.x_max = 0.0, 2.2
+        self.y_min, self.y_max = 0.0, 0.41
 
     # ==========================================================
     # 1. Particular Solution (The "Interpolation" Function)
@@ -716,13 +719,20 @@ class Stokes2DHardAll(Stokes2D): # Apart from Wall and Cylinder boundary, also h
            - Decays naturally as 1/r^2.
         """
         # 1. Background Flow (Parabolic Poiseuille)
+        # u_channel = 4 * U_max * y * (W - y) / W^2
         u_channel = 4.0 * self.u_max * (y * (self.W - y)) / (self.W**2)
 
         # 2. Compute Squared Euclidean Distance from Center
+        # r^2 = (x - xc)^2 + (y - yc)^2
         r_sq = (x - self.xc)**2 + (y - self.yc)**2
         
         # 3. Algebraic Shielding
+        # We clamp r_sq to be at least R^2 to avoid division by zero 
+        # inside the cylinder (though we only solve outside, this is safe).
         safe_r_sq = jnp.maximum(r_sq, self.R**2)
+        
+        # Factor = 1 - (R^2 / r^2)
+        # This creates a "hole" in the flow exactly the size of the cylinder
         shield = 1.0 - (self.R**2 / safe_r_sq)
 
         # 4. Combine
@@ -746,6 +756,7 @@ class Stokes2DHardAll(Stokes2D): # Apart from Wall and Cylinder boundary, also h
         phi_wall = (y * (self.W - y)) / (self.W**2)
 
         # B. Inflow Constraint (x=0)
+        # Term 'x' vanishes at x=0. Normalized by L.
         phi_in = x / self.L
 
         m = self.config.get("phi_m", 2.0)
@@ -757,8 +768,11 @@ class Stokes2DHardAll(Stokes2D): # Apart from Wall and Cylinder boundary, also h
             phi_out = 1.0 # No constraint at outlet
             phi = (phi_cyl**(-m)+phi_wall**(-m)+phi_in**(-m))**(-1/m) 
 
-        return phi
+        return phi#phi_cyl * phi_wall * phi_in * phi_out
 
+    # ==========================================================
+    # 3. Neural Network Ansatz
+    # ==========================================================
     def neural_net(self, params, x, y):
         x_norm = x / self.L  # rescale x into [0, 1]
         y_norm = y / self.W  # rescale y into [0, 1]

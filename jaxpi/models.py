@@ -7,6 +7,8 @@ from flax import jax_utils
 import jax.numpy as jnp
 from jax import lax, jit, grad, pmap, random, jacfwd, jacrev
 from jax.tree_util import tree_map, tree_reduce, tree_leaves
+from flax.traverse_util import flatten_dict, unflatten_dict
+
 
 import optax
 
@@ -51,6 +53,9 @@ def _create_arch(config):
     elif config.arch_name == "DeepONet":
         arch = archs.DeepONet(**config)
 
+    elif config.arch_name == "TimeDependentPINN":
+        arch = archs.TimeDependentPINN(**config)
+
     else:
         raise NotImplementedError(f"Arch {config.arch_name} not supported yet!")
 
@@ -67,6 +72,51 @@ def _create_optimizer(config):
         tx = optax.adam(
             learning_rate=lr, b1=config.beta1, b2=config.beta2, eps=config.eps
         )
+    
+    elif config.optimizer == 'ClipAdamW':
+        lr = optax.warmup_cosine_decay_schedule(
+            init_value=config.learning_rate * 0.01,
+            peak_value=config.learning_rate,
+            warmup_steps=config.warmup_steps,
+            decay_steps=config.decay_steps,
+            end_value=config.learning_rate * 0.01,
+        )
+        # lr = optax.exponential_decay(
+        #     init_value=config.learning_rate,
+        #     transition_steps=config.decay_steps,
+        #     decay_rate=config.decay_rate,
+        # )
+        def make_mask_gaussian(params):
+            flat = flatten_dict(params, sep="/")
+            mask_flat = {}
+            for k in flat.keys():
+                name = k
+                # Example: don't decay Gaussian centers/sigmas
+                if name.endswith("/mu") or name.endswith("/log_sigma") or name.endswith("/sigmas"):
+                    mask_flat[k] = False
+                # still skip biases/scales
+                elif name.endswith("/bias") or name.endswith("/scale"):
+                    mask_flat[k] = False
+                else:
+                    mask_flat[k] = True
+            return unflatten_dict(mask_flat, sep="/")
+
+        # Optimizer with gradient clipping
+        tx = optax.chain(
+            optax.clip_by_global_norm(config.grad_clip),
+            optax.adamw(lr, b1=config.beta1,b2=config.beta2,eps=config.eps,weight_decay=config.weight_decay, mask=make_mask_gaussian),
+        )
+    
+    elif config.optimizer == 'ClipAdam':
+        lr = optax.exponential_decay(
+            init_value=config.learning_rate,
+            transition_steps=config.decay_steps,
+            decay_rate=config.decay_rate,
+        )
+        tx = optax.chain(
+            optax.clip_by_global_norm(config.grad_clip),
+            optax.adam(learning_rate=lr, b1=config.beta1, b2=config.beta2, eps=config.eps),
+        )
 
     else:
         raise NotImplementedError(f"Optimizer {config.optimizer} not supported yet!")
@@ -82,7 +132,12 @@ def _create_train_state(config):
     # Initialize network
     arch = _create_arch(config.arch)
     x = jnp.ones(config.input_dim)
-    params = arch.init(random.PRNGKey(config.seed), x)
+    try:
+        params = arch.init(random.PRNGKey(config.seed), x)
+    except TypeError:
+        # For TimeDependentPINN which requires two inputs
+        t = 1.0
+        params = arch.init(random.PRNGKey(config.seed), x, t)
 
     # Initialize optax optimizer
     tx = _create_optimizer(config.optim)
@@ -126,6 +181,8 @@ class PINN:
         weighted_losses = tree_map(lambda x, y: x * y, losses, weights)
         # Sum weighted losses
         loss = tree_reduce(lambda x, y: x + y, weighted_losses)
+
+        loss= jnp.where(jnp.isnan(loss), 1e6, loss)
         return loss
 
     @partial(jit, static_argnums=(0,))
@@ -169,6 +226,10 @@ class PINN:
     @partial(pmap, axis_name="batch", static_broadcasted_argnums=(0,))
     def step(self, state, batch, *args):
         grads = grad(self.loss)(state.params, state.weights, batch, *args)
+        grads = tree_map(
+            lambda g: jnp.where(jnp.isnan(g), 0.0, g), 
+            grads
+        )
         grads = lax.pmean(grads, "batch")
         state = state.apply_gradients(grads=grads)
         return state

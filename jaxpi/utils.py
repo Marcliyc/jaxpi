@@ -44,21 +44,45 @@ def save_checkpoint(state, workdir, keep=5, name=None):
         checkpoints.save_checkpoint(workdir, state, step=step, keep=keep)
 
 
-def restore_checkpoint(state, workdir, step=None):
-    # check if passed state is in a sharded state
-    # if so, reduce to a single device sharding
+# def restore_checkpoint(state, workdir, step=None):
+#     # check if passed state is in a sharded state
+#     # if so, reduce to a single device sharding
 
-    if isinstance(
-        tree_map(lambda x: jnp.array(x).sharding, jax.tree.leaves(state.params))[0],
-        jax.sharding.PmapSharding,
-    ):
+#     if isinstance(
+#         tree_map(lambda x: jnp.array(x).sharding, jax.tree.leaves(state.params))[0],
+#         jax.sharding.PmapSharding,
+#     ):
+#         state = tree_map(lambda x: x[0], state)
+
+#     # ensuring that we're in a single device setting
+#     assert isinstance(
+#         tree_map(lambda x: jnp.array(x).sharding, jax.tree.leaves(state.params))[0],
+#         jax.sharding.SingleDeviceSharding,
+#     )
+
+#     state = checkpoints.restore_checkpoint(workdir, state, step=step)
+#     return state
+
+
+def _to_single_device(pytree, device=None):
+    if device is None:
+        device = jax.devices()[0]
+    host = jax.device_get(pytree)          # brings to host (numpy)
+    return jax.device_put(host, device)    # puts back on one device
+
+def restore_checkpoint(state, workdir, step=None):
+    # Inspect sharding of first param leaf
+    leaf = jax.tree.leaves(state.params)[0]
+    sharding = getattr(leaf, "sharding", None)
+
+    # If this is pmap-replicated (has leading replica axis), peel replica 0
+    if isinstance(sharding, jax.sharding.PmapSharding):
         state = tree_map(lambda x: x[0], state)
 
-    # ensuring that we're in a single device setting
-    assert isinstance(
-        tree_map(lambda x: jnp.array(x).sharding, jax.tree.leaves(state.params))[0],
-        jax.sharding.SingleDeviceSharding,
-    )
+    # If still not single-device, force it to one device
+    leaf = jax.tree.leaves(state.params)[0]
+    sharding = getattr(leaf, "sharding", None)
+    if not isinstance(sharding, jax.sharding.SingleDeviceSharding):
+        state = _to_single_device(state, device=jax.devices()[0])
 
-    state = checkpoints.restore_checkpoint(workdir, state, step=step)
-    return state
+    return checkpoints.restore_checkpoint(workdir, state, step=step)

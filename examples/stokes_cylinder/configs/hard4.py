@@ -12,14 +12,15 @@ def get_config():
     # Weights & Biases
     config.wandb = wandb = ml_collections.ConfigDict()
     wandb.project = "PINN-Stokes"
-    wandb.name = "sota"
+    wandb.name = "hard4"
     wandb.tag = None
 
     # Nondimensionalization
     config.nondim = True
 
     # Constraints
-    config.bc_constraints = "soft"  # "hard" or "soft" or "hybrid"
+    config.bc_constraints = "hard"  # "hard" or "soft"
+    config.cyl_alpha = 0.8
 
     # Arch
     config.arch = arch = ml_collections.ConfigDict()
@@ -57,19 +58,19 @@ def get_config():
     weighting.scheme = "grad_norm"
     weighting.init_weights = ml_collections.ConfigDict(
         {
-            "u_in": 1.0,
-            "v_in": 1.0,
-            "u_out": 1.0,
-            "v_out": 1.0,
-            "u_noslip": 1.0,
-            "v_noslip": 1.0,
+            # "u_in": 1.0,
+            # "v_in": 1.0,
+            # "u_out": 1.0,
+            # "v_out": 1.0,
+            # "u_noslip": 1.0,
+            # "v_noslip": 1.0,
             "ru": 1.0,
             "rv": 1.0,
             "rc": 1.0,
         }
     )
     weighting.momentum = 0.9
-    weighting.update_every_steps = 1000  # 100 for grad norm and 1000 for ntk
+    weighting.update_every_steps = 100  # 100 for grad norm and 1000 for ntk
 
     # Logging
     config.logging = logging = ml_collections.ConfigDict()

@@ -70,15 +70,40 @@ def evaluate(config: ml_collections.ConfigDict, workdir: str):
         Re = 1 / nu
 
     # Initialize model
-    model = models.Stokes2D(
-        config,
-        u_inflow,
-        inflow_coords,
-        outflow_coords,
-        wall_coords,
-        cylinder_coords,
-        Re,
-    )
+    if config.bc_constraints == "hard":
+        model = models.Stokes2DHardAll(
+            config,
+            u_inflow,
+            inflow_coords,
+            outflow_coords,
+            wall_coords,
+            cylinder_coords,
+            Re,
+            hard_outflow=True,
+        )
+    elif config.bc_constraints == "hybrid":
+        model = models.Stokes2DHardBC(
+            config,
+            u_inflow,
+            inflow_coords,
+            outflow_coords,
+            wall_coords,
+            cylinder_coords,
+            Re,
+            cylinder_dist = config.cylinder_dist,
+            wall_dist= config.wall_dist,
+        )
+    else:
+        model = models.Stokes2D(
+            config,
+            u_inflow,
+            inflow_coords,
+            outflow_coords,
+            wall_coords,
+            cylinder_coords,
+            Re,
+        )
+
 
     # Restore checkpoint
     # ckpt_path = os.path.join(".", "ckpt", config.wandb.name)

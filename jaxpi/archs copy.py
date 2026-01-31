@@ -1,6 +1,5 @@
 from functools import partial
 from typing import Any, Callable, Sequence, Tuple, Optional, Union, Dict, Literal
-from dataclasses import field
 
 from flax import linen as nn
 from flax.core.frozen_dict import freeze
@@ -8,7 +7,7 @@ from flax.core.frozen_dict import freeze
 from jax import random, jit, vmap
 from jax.nn import sigmoid
 import jax.numpy as jnp
-from jax.nn.initializers import glorot_normal, normal, zeros, constant, uniform
+from jax.nn.initializers import glorot_normal, normal, zeros, constant
 
 activation_fn = {
     "relu": nn.relu,
@@ -185,7 +184,6 @@ class ModifiedMlp(nn.Module):
     activation: str = "tanh"
     periodicity: Union[None, Dict] = None
     fourier_emb: Union[None, Dict] = None
-    pyramid: Union[None, Dict] = None
     reparam: Union[None, Dict] = None
 
     def setup(self):
@@ -198,10 +196,6 @@ class ModifiedMlp(nn.Module):
 
         if self.fourier_emb:
             x = FourierEmbs(**self.fourier_emb)(x)
-
-        if self.pyramid:
-            x = SpatialFeaturePyramid(**self.pyramid)(x)
-            x = jnp.concatenate(x, axis=-1)
 
         u = Dense(features=self.hidden_dim, reparam=self.reparam)(x)
         v = Dense(features=self.hidden_dim, reparam=self.reparam)(x)
@@ -242,32 +236,33 @@ class MlpBlock(nn.Module):
         return x
     
 # Multi-resolution grid
-# def cubic_bspline_weight(t):
-#     t = jnp.abs(t)
-#     return jnp.where(
-#         t < 1.0,
-#         2.0/3.0 - t**2 + 0.5*t**3,
-#         jnp.where(t < 2.0, (2.0 - t)**3 / 6.0, 0.0)
-#     )
 def cubic_bspline_weight(t):
     t = jnp.abs(t)
     return jnp.where(
         t < 1.0,
-        2.0/3.0 - 1.5*t**2 + 0.5*t**3,
-        jnp.where(t < 2.0, (2.0 - t)**3 / 2.0, 0.0)
+        2.0/3.0 - t**2 + 0.5*t**3,
+        jnp.where(t < 2.0, (2.0 - t)**3 / 6.0, 0.0)
     )
 
 def linear_weight(t):
     return jnp.maximum(0.0, 1.0 - jnp.abs(t))
 
-# In jaxpi/archs.py
-
-def interpolate_grid_nd(grid, x, res=None,
-                        attn_mode=(0,0), # Ensure this is a tuple as per previous fix
-                        x_min=None, x_max=None, 
-                        weight_fn=cubic_bspline_weight, offsets=jnp.arange(-1, 3)):
-    ndim = len(attn_mode)
+def interpolate_grid_2d(grid, x):
+    N = grid.shape[0]
+    gx = x * (N - 1)
+    idx = jnp.floor(gx).astype(jnp.int32)
     
+    result = jnp.zeros(grid.shape[-1])
+    for di in range(-1, 3):
+        for dj in range(-1, 3):
+            wi = cubic_bspline_weight(gx[0] - (idx[0] + di))
+            wj = cubic_bspline_weight(gx[1] - (idx[1] + dj))
+            ii = jnp.clip(idx[0] + di, 0, N - 1)
+            jj = jnp.clip(idx[1] + dj, 0, N - 1)
+            result = result + wi * wj * grid[ii, jj, :]
+    return result
+
+def interpolate_grid_nd(grid, x, ndim=2, x_min=None, x_max=None, method: Literal['linear', 'cubic'] = 'cubic'):
     if x_min is None:
         x_min = jnp.zeros((ndim,))
     if x_max is None:
@@ -277,100 +272,33 @@ def interpolate_grid_nd(grid, x, res=None,
     domain_size = x_max - x_min
     x_norm = (x - x_min) / jnp.where(domain_size == 0, 1.0, domain_size)
 
-    if res is None:
-        res = min(grid.shape[:-1])
-    N = jnp.array([res]*ndim)
-    #print(N)
-    gx = x_norm * (N)
-    
-    # Convert tuple to array for the 'add' calculation
-    attn_mode_arr = jnp.array(attn_mode)
-    add = jnp.where(attn_mode_arr == 0, 1, 0)
-    gx += add
-    
-    base_idx = jnp.floor(gx)
-    base_idx = base_idx.astype(jnp.int32)
-    #print(base_idx)
-    
+    spatial_shape = jnp.array(grid.shape[:-1])
+    gx = x_norm * (spatial_shape - 1)
+    base_idx = jnp.floor(gx).astype(jnp.int32)
+
+    if method == 'linear':
+        offsets = jnp.arange(0, 2) 
+        weight_fn = linear_weight
+    else:
+        offsets = jnp.arange(-1, 3)
+        weight_fn = cubic_bspline_weight
+
     dim_weights = []
     dim_coords = []
-    
-    for d, mode in enumerate(attn_mode):
-        idx_d = base_idx[d] + offsets 
+    for d in range(ndim):
+        idx_d = base_idx[d] + offsets # Shape: (Kernel size,)
         dist_d = gx[d] - idx_d
-        w_d = weight_fn(dist_d)
-        
-        if mode == 0:  
-            c_d = jnp.clip(idx_d, 0, N[d] - 1)
-        else:          
-            c_d = jnp.mod(idx_d, N[d])
-            
+        w_d = weight_fn(dist_d)       # Shape: (K,)
+        c_d = jnp.clip(idx_d, 0, spatial_shape[d] - 1)
         dim_weights.append(w_d)
         dim_coords.append(c_d)
-
-    #print(grid.shape)
-    #print(type(grid), getattr(grid, "dtype", None))
-    #print(type(dim_coords),getattr(dim_coords, "dtype", None),dim_coords)
-    # grid_patch = grid[jnp.ix_(*dim_coords)]
-
-    # idx_grids = jnp.meshgrid(*dim_coords, indexing="ij")  # list of ndim arrays, shape (4,4,...)
-    # grid_patch = grid[tuple(idx_grids)]                   # shape (4,4,...,feat_dim)
-    # if ndim == 1:
-    #     grid_patch = grid[dim_coords[0]]  # shape (4, feat_dim) if grid is (N, feat_dim)
-    # else:
-    #     grid_patch = grid[jnp.ix_(*dim_coords)]
-    grid_patch = grid
-    for axis, coords in enumerate(dim_coords):
-        grid_patch = jnp.take(grid_patch, coords, axis=axis)
-
+    grid_patch = grid[jnp.ix_(*dim_coords)]
     combined_weights = dim_weights[0]
     for i in range(1, ndim):
         combined_weights = jnp.expand_dims(combined_weights, axis=-1)
         combined_weights = combined_weights * dim_weights[i]
     combined_weights = jnp.expand_dims(combined_weights, axis=-1)
     return jnp.sum(grid_patch * combined_weights, axis=tuple(range(ndim)))
-
-# def interpolate_grid_nd(grid, x, 
-#                         attn_mode = (0,0), # default 'clip' for all dims
-#                         x_min=None, x_max=None, 
-#                         weight_fn=cubic_bspline_weight, offsets = jnp.arange(-1, 3)):
-#     ndim=len(attn_mode)
-#     if x_min is None:
-#         x_min = jnp.zeros((ndim,))
-#     if x_max is None:
-#         x_max = jnp.ones((ndim,))
-#     x_min = jnp.asarray(x_min)
-#     x_max = jnp.asarray(x_max)
-#     domain_size = x_max - x_min
-#     x_norm = (x - x_min) / jnp.where(domain_size == 0, 1.0, domain_size)
-
-#     N = jnp.array([min(grid.shape[:-1])]*ndim)  # Assuming cubic grid for simplicity
-#     gx = x_norm * (N)
-#     attn_mode_arr = jnp.array(attn_mode)
-#     add = jnp.where(attn_mode_arr == 0, 1, 0)  # clip:3, repeat:0
-#     base_idx = jnp.floor(gx)+add
-#     base_idx = base_idx.astype(jnp.int32)
-
-#     dim_weights = []
-#     dim_coords = []
-#     for d,mode in enumerate(attn_mode):
-#         idx_d = base_idx[d] + offsets # Shape: (Kernel size,)
-#         dist_d = gx[d] - idx_d
-#         w_d = weight_fn(dist_d)       # Shape: (K,)
-#         if mode == 0:  # clip
-#             c_d = jnp.clip(idx_d, 0, N[d] - 1)
-#         else:          # repeat
-#             c_d = jnp.mod(idx_d, N[d])
-#         dim_weights.append(w_d)
-#         dim_coords.append(c_d)
-        
-#     grid_patch = grid[jnp.ix_(*dim_coords)]
-#     combined_weights = dim_weights[0]
-#     for i in range(1, ndim):
-#         combined_weights = jnp.expand_dims(combined_weights, axis=-1)
-#         combined_weights = combined_weights * dim_weights[i]
-#     combined_weights = jnp.expand_dims(combined_weights, axis=-1)
-#     return jnp.sum(grid_patch * combined_weights, axis=tuple(range(ndim)))
 
 # def interpolate_grid_nd(grid, x, ndim=2, method: Literal['linear', 'cubic'] = 'cubic'):
 #     #ndim = x.shape[0]
@@ -403,156 +331,47 @@ def interpolate_grid_nd(grid, x, res=None,
 #         combined_weights = combined_weights * dim_weights[i]
 #     combined_weights = jnp.expand_dims(combined_weights, axis=-1)
 #     return jnp.sum(grid_patch * combined_weights, axis=tuple(range(ndim)))
-
+    
+# class SpatialFeaturePyramid(nn.Module):
+#     num_levels: int = 6
+#     base_resolution: int = 4
+#     feature_dim: int = 48
+    
+#     @nn.compact
+#     def __call__(self, x: jnp.ndarray) -> list:
+#         features = []
+#         for level in range(self.num_levels):
+#             res = self.base_resolution * (2 ** level)
+#             grid = self.param(
+#                 f'grid_{level}',
+#                 nn.initializers.normal(0.01),
+#                 (res + 3, res + 3, self.feature_dim)
+#             )
+#             features.append(interpolate_grid_2d(grid, x))
+#         return features[::-1]
 
 class SpatialFeaturePyramid(nn.Module):
     num_levels: int = 6
     base_resolution: int = 4
     feature_dim: int = 48
-    #ndim: int = 2                       # New: Support 1D, 2D, 3D
-    attn_mode: tuple = (0,0) #0:'clip',1:'repeat', default ['clip','clip'] for 2D
-    interp_method: str = 'cubic'        # New: 'linear' or 'cubic', not used currently
+    ndim: int = 2                       # New: Support 1D, 2D, 3D
+    interp_method: str = 'cubic'        # New: 'linear' or 'cubic'
     x_min: Union[None, jnp.ndarray, float, int] = None
     x_max: Union[None, jnp.ndarray, float, int] = None
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> list:
         features = []
-        # padding = 3
+        padding = 3 if self.interp_method == 'cubic' else 1
         for level in range(self.num_levels):
             res = self.base_resolution * (2 ** level)
-            grid_shape = ()
-            for mode in self.attn_mode:
-                if mode == 0: #clip
-                    padding = 3
-                elif mode == 1: #repeat for periodic bc
-                    padding = 0
-                else:
-                    raise NotImplementedError(f'Attention mode {mode} not supported!')
-                grid_shape += (res + padding,)
-            grid_shape += (self.feature_dim,)
+            grid_shape = (res + padding,) * self.ndim + (self.feature_dim,)
             grid = self.param(
                 f'grid_{level}',
                 nn.initializers.normal(0.01),
                 grid_shape
             )
-            features.append(interpolate_grid_nd(grid, x, res=res, attn_mode=self.attn_mode, x_min=self.x_min, x_max=self.x_max))
-            #features.append(interpolate_grid_2d(grid, x, x_min=self.x_min, x_max=self.x_max))
-        return features[::-1]
-
-class GaussianNd_Diag(nn.Module):
-    ndim: int = 2
-    num_gaussian: int = 100
-    grid_range: float = 1.
-    grid_shift: Union[None, jnp.ndarray] = None
-    sigmas_range: float = 0.5
-    mlp_dim: int = 4
-
-    def setup(self):
-        # Parameters for N dimensions
-        # mu: (mlp_dim, num_gaussian, ndim)
-        self.mu = self.param("mu", uniform(self.grid_range), (self.mlp_dim, self.num_gaussian, self.ndim))
-        # sigmas: (mlp_dim, num_gaussian, ndim)
-        self.sigmas = self.param("sigmas", constant(self.sigmas_range), (self.mlp_dim, self.num_gaussian, self.ndim))
-        self.weight = self.param("weight", normal(), (self.mlp_dim, self.num_gaussian, 1))
-
-    @nn.compact
-    def __call__(self, x):
-        if self.grid_shift:
-            x = x+self.grid_shift
-
-        x = jnp.atleast_1d(x)
-        # x shape: (ndim,)
-        # Broadcast x to (1, 1, ndim) to match params (mlp_dim, num_gaussian, ndim)
-        diff = (x[None, None, :] - self.mu) / self.sigmas
-        
-        # Sum of squares along the spatial dimension (last axis)
-        log_pdf = -0.5 * jnp.sum(diff**2, axis=-1)  # (mlp_dim, num_gaussian)
-        pdf = jnp.exp(log_pdf)
-
-        # weight is (mlp_dim, num_gaussian, 1), squeeze to match pdf
-        w = self.weight[..., 0]
-
-        # Weighted sum over gaussians (axis 1)
-        output = jnp.sum(pdf * w, axis=1)  # (mlp_dim,)
-
-        return output
-    
-class GaussianNd_Shared(nn.Module):
-    ndim: int = 2
-    num_gaussian: int = 100
-    grid_range: float = 1.
-    grid_shift: Union[None, jnp.ndarray] = None
-    sigmas_range: float = 0.5
-    mlp_dim: int = 4
-
-    def setup(self):
-        # Shared Parameters for N dimensions
-        # mu: (num_gaussian, ndim)
-        self.mu = self.param("mu", uniform(self.grid_range), (self.num_gaussian, self.ndim))
-        # sigmas: (num_gaussian, ndim)
-        self.sigmas = self.param("sigmas", constant(self.sigmas_range), (self.num_gaussian, self.ndim))
-
-        # Mixing weights: (num_gaussian, mlp_dim)
-        self.weight = self.param("weight", normal(), (self.num_gaussian, self.mlp_dim))
-
-    @nn.compact
-    def __call__(self, x):
-        if self.grid_shift:
-            x = x+self.grid_shift
-
-        x = jnp.atleast_1d(x)
-        # x shape: (ndim,)
-        # Broadcast x to (1, ndim) to match params (num_gaussian, ndim)
-        diff = (x[None, :] - self.mu) / self.sigmas
-
-        # Sum of squares along the spatial dimension (last axis)
-        log_pdf = -0.5 * jnp.sum(diff**2, axis=-1)  # (num_gaussian,)
-        pdf = jnp.exp(log_pdf)
-
-        # Weighted combination of the shared gaussians
-        # (num_gaussian,) @ (num_gaussian, mlp_dim) -> (mlp_dim,)
-        output = pdf @ self.weight
-
-        return output
-
-class SpatialFeatureGaussian(nn.Module):
-    num_levels: int = 6
-    base_resolution: int = 4
-    feature_dim: int = 48
-    ndim: int = 2
-    grid_range: float = 1.
-    grid_shift: Union[None, jnp.ndarray] = None
-    shared: bool = False
-
-    @nn.compact
-    def __call__(self, x: jnp.ndarray) -> list:
-        features = []
-        for level in range(self.num_levels):
-            res = self.base_resolution * (2 ** level)
-            # Use res as number of gaussians per level
-            # Pass the full vector x to the N-d module
-            if self.shared:
-                feat = GaussianNd_Shared(
-                    ndim=self.ndim,
-                    grid_range = self.grid_range,
-                    grid_shift = self.grid_shift,
-                    num_gaussian=res, 
-                    sigmas_range=1/res, 
-                    mlp_dim=self.feature_dim, 
-                    name=f'gauss_{level}'
-                )(x)
-            else:
-                feat = GaussianNd_Diag(
-                    ndim=self.ndim,
-                    grid_range = self.grid_range,
-                    grid_shift = self.grid_shift,
-                    num_gaussian=res, 
-                    sigmas_range=1/res, 
-                    mlp_dim=self.feature_dim, 
-                    name=f'gauss_{level}'
-                )(x)
-            features.append(feat)
+            features.append(interpolate_grid_nd(grid, x, ndim=self.ndim, x_min=self.x_min, x_max=self.x_max, method=self.interp_method))
         return features[::-1]
 
 class TimeConditionedGatedBlock(nn.Module):
@@ -615,21 +434,31 @@ class TimeConditionedDecoder(nn.Module):
     
 class TimeDependentPINN(nn.Module):
     arch_name: Optional[str] = "TimeDependentPINN"
+    num_levels: int = 6
+    base_resolution: int = 4
+    feature_dim: int = 48
+    ndim: int = 2                       # New: Support 1D, 2D, 3D
+    interp_method: str = 'cubic'        # New: 'linear' or 'cubic'
     hidden_mult: int = 2
     time_embed_dim: int = 64
     max_period: float = 1.0
     out_dim: int = 1
     activation: str = 'gelu'
     reparam: Union[None, Dict] = None
-    pyramid: Union[None, Dict] = None
-    gaussian: Union[None, Dict] = None
+    x_min: Union[None, jnp.ndarray, float, int] = None
+    x_max: Union[None, jnp.ndarray, float, int] = None
     
     @nn.compact
     def __call__(self, x: jnp.ndarray, t: float) -> jnp.ndarray:
-        if self.pyramid:
-            features = SpatialFeaturePyramid(**self.pyramid)(x)
-        elif self.gaussian:
-            features = SpatialFeatureGaussian(**self.gaussian)(x)
+        features = SpatialFeaturePyramid(
+            num_levels=self.num_levels,
+            base_resolution=self.base_resolution,
+            feature_dim=self.feature_dim,
+            ndim=self.ndim,
+            interp_method=self.interp_method,
+            x_min=self.x_min,
+            x_max=self.x_max,
+        )(x)
         u = TimeConditionedDecoder(
             hidden_mult=self.hidden_mult,
             time_embed_dim=self.time_embed_dim,

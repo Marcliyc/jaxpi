@@ -12,21 +12,28 @@ def get_config():
     # Weights & Biases
     config.wandb = wandb = ml_collections.ConfigDict()
     wandb.project = "PINN-Stokes"
-    wandb.name = "sota"
+    wandb.name = "hybrid-cyl-cheat"
     wandb.tag = None
 
     # Nondimensionalization
     config.nondim = True
 
+    # Cheat
+    config.cheat = True
+
     # Constraints
-    config.bc_constraints = "soft"  # "hard" or "soft" or "hybrid"
+    config.bc_constraints = "hybrid"  # "hard" or "soft" or "hybrid"
+    config.cylinder_dist = True
+    config.cyl_alpha = 50
+    config.phi_m = 2.0
+    config.wall_dist = False
 
     # Arch
     config.arch = arch = ml_collections.ConfigDict()
     arch.arch_name = "ModifiedMlp"
     arch.num_layers = 4
     arch.hidden_dim = 256
-    arch.out_dim = 3
+    arch.out_dim = 2 # u,v and not p
     arch.activation = "gelu"  # gelu works better than tanh
     arch.periodicity = None
     arch.fourier_emb = ml_collections.ConfigDict(
@@ -61,8 +68,8 @@ def get_config():
             "v_in": 1.0,
             "u_out": 1.0,
             "v_out": 1.0,
-            "u_noslip": 1.0,
-            "v_noslip": 1.0,
+            "u_wall": 1.0,
+            "v_wall": 1.0,
             "ru": 1.0,
             "rv": 1.0,
             "rc": 1.0,

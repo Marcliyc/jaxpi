@@ -9,6 +9,15 @@ from jaxpi.utils import ntk_fn, flatten_pytree
 
 from matplotlib import pyplot as plt
 
+def huber_loss(residual, delta=1.0):
+    """Huber loss: more robust to outliers than MSE."""
+    abs_r = jnp.abs(residual)
+    return jnp.where(
+        abs_r <= delta,
+        0.5 * residual ** 2,
+        delta * (abs_r - 0.5 * delta)
+    )
+
 
 class AllenCahn(ForwardIVP):
     def __init__(self, config, u0, t_star, x_star):
@@ -45,7 +54,9 @@ class AllenCahn(ForwardIVP):
         r_pred = vmap(self.r_net, (None, 0, 0))(params, t_sorted, batch[:, 1])
         # Split residuals into chunks
         r_pred = r_pred.reshape(self.num_chunks, -1)
-        l = jnp.mean(r_pred**2, axis=1)
+        r_pred = jnp.clip(r_pred, -100.0, 100.0)
+        #l = jnp.mean(r_pred**2, axis=1)
+        l = jnp.mean(huber_loss(r_pred,delta=1.0),axis=1)
         w = lax.stop_gradient(jnp.exp(-self.tol * (self.M @ l)))
         return l, w
 
@@ -99,6 +110,96 @@ class AllenCahn(ForwardIVP):
         u_pred = self.u_pred_fn(params, self.t_star, self.x_star)
         error = jnp.linalg.norm(u_pred - u_test) / jnp.linalg.norm(u_test)
         return error
+
+class AllenCahnTime(AllenCahn):
+    def __init__(self, config, u0, t_star, x_star):
+        super().__init__(config, u0, t_star, x_star)
+        self.x0 = x_star[0]
+        self.x1 = x_star[-1]
+
+    def u_net(self, params, t, x):
+        #z = jnp.stack([x, t])
+        u = self.state.apply_fn(params, x, t)
+        return u[0]
+    
+    # @partial(jit, static_argnums=(0,))
+    # def losses(self, params, batch):
+    #     # Initial condition loss
+    #     u_pred = vmap(self.u_net, (None, None, 0))(params, self.t0, self.x_star)
+    #     ics_loss = jnp.mean((self.u0 - u_pred) ** 2)
+
+    #     # Boundary condition loss
+    #     u_x0 = vmap(self.u_net, (None, 0, None))(params, self.t_star, self.x0)
+    #     u_x1 = vmap(self.u_net, (None, 0, None))(params, self.t_star, self.x1)
+    #     bc_loss = jnp.mean((u_x0 - u_x1) ** 2)
+
+    #     u_xx0 = vmap(grad(self.u_net, argnums=2), (None, 0, None))(params, self.t_star, self.x0)
+    #     u_xx1 = vmap(grad(self.u_net, argnums=2), (None, 0, None))(params, self.t_star, self.x1)
+    #     # bc_lossx = jnp.mean((u_xx0 - u_xx1) ** 2)
+    #     bc_loss += jnp.mean((u_xx0 - u_xx1) ** 2)
+
+    #     # Residual loss
+    #     if self.config.weighting.use_causal == True:
+    #         l, w = self.res_and_w(params, batch)
+    #         res_loss = jnp.mean(l * w)
+    #     else:
+    #         r_pred = vmap(self.r_net, (None, 0, 0))(params, batch[:, 0], batch[:, 1])
+    #         res_loss = jnp.mean((r_pred) ** 2)
+
+    #     # loss_dict = {"ics": ics_loss, "res": res_loss, "bc": bc_loss, "bcx": bc_lossx}
+    #     loss_dict = {"ics": ics_loss, "res": res_loss, "bc": bc_loss}
+    #     return loss_dict
+
+    # @partial(jit, static_argnums=(0,))
+    # def compute_diag_ntk(self, params, batch):
+    #     ics_ntk = vmap(ntk_fn, (None, None, None, 0))(
+    #         self.u_net, params, self.t0, self.x_star
+    #     )
+
+    #     bc_ntk = vmap(ntk_fn, (None, None, 0, None))(
+    #         self.u_net, params, self.t_star, self.x0
+    #     )
+    #     bc_ntk += vmap(ntk_fn, (None, None, 0, None))(
+    #         self.u_net, params, self.t_star, self.x1
+    #     )
+    #     bc_ntk /= 2.0
+
+    #     bcx_ntk = vmap(ntk_fn, (None, None, 0, None))(
+    #         grad(self.u_net, argnums=2), params, self.t_star, self.x0  
+    #     )
+    #     bcx_ntk += vmap(ntk_fn, (None, None, 0, None))(
+    #         grad(self.u_net, argnums=2), params, self.t_star, self.x1
+    #     )
+    #     bcx_ntk /= 2.0
+
+    #     # Consider the effect of causal weights
+    #     if self.config.weighting.use_causal:
+    #         # sort the time step for causal loss
+    #         batch = jnp.array([batch[:, 0].sort(), batch[:, 1]]).T
+    #         res_ntk = vmap(ntk_fn, (None, None, 0, 0))(
+    #             self.r_net, params, batch[:, 0], batch[:, 1]
+    #         )
+    #         res_ntk = res_ntk.reshape(self.num_chunks, -1)  # shape: (num_chunks, -1)
+    #         res_ntk = jnp.mean(
+    #             res_ntk, axis=1
+    #         )  # average convergence rate over each chunk
+    #         _, casual_weights = self.res_and_w(params, batch)
+    #         res_ntk = res_ntk * casual_weights  # multiply by causal weights
+    #     else:
+    #         res_ntk = vmap(ntk_fn, (None, None, 0, 0))(
+    #             self.r_net, params, batch[:, 0], batch[:, 1]
+    #         )
+
+    #     ntk_dict = {"ics": ics_ntk, "res": res_ntk, "bc": bc_ntk, "bcx": bcx_ntk}
+
+    #     return ntk_dict
+
+    # def r_net(self, params, t, x):
+    #     u = self.u_net(params, t, x)
+    #     u_t = grad(self.u_net, argnums=1)(params, t, x)
+    #     u_x = grad(self.u_net, argnums=2)(params, t, x)
+    #     u_xx = grad(grad(self.u_net, argnums=2), argnums=2)(params, t, x)
+    #     return u_t + 5 * u**3 - 5 * u - 0.0001 * u_xx
 
 
 class AllenCanhEvaluator(BaseEvaluator):

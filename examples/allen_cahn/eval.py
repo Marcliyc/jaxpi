@@ -6,6 +6,9 @@ import jax.numpy as jnp
 
 import matplotlib.pyplot as plt
 
+import jax
+from jax.tree_util import tree_map
+
 from jaxpi.utils import restore_checkpoint
 
 import models
@@ -17,13 +20,22 @@ def evaluate(config: ml_collections.ConfigDict, workdir: str):
     u0 = u_ref[0, :]
 
     # Restore model
-    model = models.AllenCahn(config, u0, t_star, x_star)
-    ckpt_path = os.path.join(workdir, "ckpt", config.wandb.name)
-    model.state = restore_checkpoint(model.state, ckpt_path)
+    if config.arch.arch_name == "TimeDependentPINN":
+        model = models.AllenCahnTime(config, u0, t_star, x_star)
+    else:
+        model = models.AllenCahn(config, u0, t_star, x_star)
+    ckpt_path = os.path.join(os.getcwd(), config.wandb.name, "ckpt")
+    #ckpt_path = os.path.join(workdir, "ckpt", config.wandb.name)
+    state = restore_checkpoint(model.state, ckpt_path)
+   
+    leaf = jax.tree.leaves(state.params)[0]
+    if leaf.ndim > 0 and leaf.shape[0] in (1, jax.local_device_count()):
+            state = state.replace(params=tree_map(lambda x: x[0], state.params))
+            # or: state = state.replace(params=unreplicate(state.params))  # if it’s standard replicated
+    model.state = state
     params = model.state.params
-
-    # Compute L2 error
     l2_error = model.compute_l2_error(params, u_ref)
+
     print("L2 error: {:.3e}".format(l2_error))
 
     u_pred = model.u_pred_fn(params, model.t_star, model.x_star)

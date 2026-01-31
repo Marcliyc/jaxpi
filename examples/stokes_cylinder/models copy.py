@@ -233,7 +233,7 @@ class Stokes2DCheat(ForwardBVP):
         wall_coords,
         cylinder_coords,
         Re,
-        p_out, # added to cheat (use p_ref)
+        p_out,
         p_x_out,
         p_y_out
     ):
@@ -269,7 +269,8 @@ class Stokes2DCheat(ForwardBVP):
         outputs = self.state.apply_fn(params, z)
         u = outputs[0]
         v = outputs[1]
-        return u, v
+        #p = outputs[2]
+        return u, v#, p
 
     def u_net(self, params, x, y):
         u, _ = self.neural_net(params, x, y)
@@ -279,7 +280,7 @@ class Stokes2DCheat(ForwardBVP):
         _, v = self.neural_net(params, x, y)
         return v
 
-    def r_net(self, params, x, y, p, p_x, p_y): #p, p_x, p_y are ref
+    def r_net(self, params, x, y, p, p_x, p_y):
         u, v = self.neural_net(params, x, y)
 
         (u_x, u_y), (v_x, v_y) = jacrev(self.neural_net, argnums=(1, 2))(params, x, y)
@@ -410,8 +411,8 @@ class Stokes2DHardBCCheat(Stokes2DCheat):
         p_out,
         p_x_out,
         p_y_out,
-        cylinder_center=[2, 2], # depends on the data generation process
-        cylinder_radius=0.5, # depends on the data generation process
+        cylinder_center=[2, 2],
+        cylinder_radius=0.5,
         cylinder_dist = False,
         wall_dist = True,
     ):   
@@ -441,27 +442,28 @@ class Stokes2DHardBCCheat(Stokes2DCheat):
         3. The Bottom Wall
         """
         # A. Cylinder Distance (Algebraic)
+        # Normalized by L^2 to keep values manageable (~order 1)
         phi = 1.0
         if self.cylinder_dist:
             if self.config.cyl_alpha > 0:
                 phi_cyl = ((x - self.xc)**2 + (y - self.yc)**2 - self.R**2) / (self.R*2)#(self.R**2)
                 alpha = self.config.cyl_alpha
-                phi_cyl = jnp.tanh(alpha * phi_cyl) # smooth
+                phi_cyl = jnp.tanh(alpha * phi_cyl)
             else:
                 phi_cyl = ((x - self.xc)**2 + (y - self.yc)**2 - self.R**2) / (self.R*2)
             phi = phi * phi_cyl
 
         # B. Wall Distance (Parabolic profile vanishing at y_min and y_max)
+        # Normalized by W^2
         if self.wall_dist:
             phi_wall = ((y - self.y_min) * (self.y_max - y)) / (self.W**2)
             phi = phi * phi_wall
 
-        # C. Combine with R-Function if both distances are used
         if self.cylinder_dist and self.wall_dist:
             m = self.config.get("phi_m", 2.0)
             phi = phi_cyl*phi_wall*(phi_cyl**m+phi_wall**m)**(-1/m)
-
-        return phi
+        # C. Combine
+        return phi# * phi_wall
     
     def neural_net(self, params, x, y):
         x_norm = x / self.L  # rescale x into [0, 1]
@@ -469,13 +471,18 @@ class Stokes2DHardBCCheat(Stokes2DCheat):
         z = jnp.stack([x_norm, y_norm])
         outputs = self.state.apply_fn(params, z)
         phi = self.geometry_phi(x, y)
-        u = outputs[0]*phi
+        #part = self.u_particular(x, y)
+        u = outputs[0]*phi # + part
         v = outputs[1]*phi
-        return u, v
+        #p = outputs[2]
+        return u, v#, p
 
     @partial(jit, static_argnums=(0,))
     def losses(self, params, batch):
         # 1. Inflow Loss (Dirichlet, Soft)
+        # Note: Even though we have hard wall constraints, the Inflow at x=0
+        # is distinct. The phi function is non-zero at x=0 (mostly), 
+        # so the network can learn the inflow parabola.
         batch, p, p_x, p_y = batch
 
         u_in_pred = self.u_pred_fn(params, self.inflow_coords[:, 0], self.inflow_coords[:, 1])
@@ -508,8 +515,6 @@ class Stokes2DHardBCCheat(Stokes2DCheat):
             "rv": rv_loss,
             "rc": rc_loss,
         }
-
-        # Wall and cylinder losses if not using distance functions
         if not self.wall_dist:
             u_wall_pred = self.u_pred_fn(
                 params, self.wall_coords[:, 0], self.wall_coords[:, 1]
@@ -555,9 +560,7 @@ class Stokes2DHardBC(Stokes2D):
         # --- Geometry Setup ---
         self.xc = cylinder_center[0]
         self.yc = cylinder_center[1]
-        #self.xc, self.yc = cylinder_coords.mean(axis=0)
         self.R = cylinder_radius
-        #self.R = jnp.sqrt(jnp.mean((cylinder_coords[:,0]-self.xc)**2 + (cylinder_coords[:,1]-self.yc)**2))
         self.cylinder_dist = cylinder_dist
         self.wall_dist = wall_dist
 
@@ -578,6 +581,7 @@ class Stokes2DHardBC(Stokes2D):
         3. The Bottom Wall
         """
         # A. Cylinder Distance (Algebraic)
+        # Normalized by L^2 to keep values manageable (~order 1)
         phi = 1.0
         if self.cylinder_dist:
             if self.config.cyl_alpha > 0:
@@ -589,16 +593,16 @@ class Stokes2DHardBC(Stokes2D):
             phi = phi * phi_cyl
 
         # B. Wall Distance (Parabolic profile vanishing at y_min and y_max)
+        # Normalized by W^2
         if self.wall_dist:
             phi_wall = ((y - self.y_min) * (self.y_max - y)) / (self.W**2)
             phi = phi * phi_wall
 
-        # C. Combine with R-Function if both distances are used
         if self.cylinder_dist and self.wall_dist:
             m = self.config.get("phi_m", 2.0)
             phi = phi_cyl*phi_wall*(phi_cyl**m+phi_wall**m)**(-1/m)
-
-        return phi
+        # C. Combine
+        return phi# * phi_wall
     
     def neural_net(self, params, x, y):
         x_norm = x / self.L  # rescale x into [0, 1]
@@ -615,6 +619,9 @@ class Stokes2DHardBC(Stokes2D):
     @partial(jit, static_argnums=(0,))
     def losses(self, params, batch):
         # 1. Inflow Loss (Dirichlet, Soft)
+        # Note: Even though we have hard wall constraints, the Inflow at x=0
+        # is distinct. The phi function is non-zero at x=0 (mostly), 
+        # so the network can learn the inflow parabola.
         u_in_pred = self.u_pred_fn(params, self.inflow_coords[:, 0], self.inflow_coords[:, 1])
         v_in_pred = self.v_pred_fn(params, self.inflow_coords[:, 0], self.inflow_coords[:, 1])
         u_in_loss = jnp.mean((u_in_pred - self.u_in) ** 2)
@@ -670,7 +677,7 @@ class Stokes2DHardBC(Stokes2D):
 
         return loss_dict
     
-class Stokes2DHardAll(Stokes2D): # Apart from Wall and Cylinder boundary, also hard-constrains Outflow and inflow
+class Stokes2DHardAll(Stokes2D):
     def __init__(
         self,
         config,
@@ -686,21 +693,18 @@ class Stokes2DHardAll(Stokes2D): # Apart from Wall and Cylinder boundary, also h
 
         
         self.hard_outflow = hard_outflow
-        self.u_max = 0.3
+        self.u_max = 0.3#u_inflow_max
 
         # Geometry
+        # self.L = 2.2
+        # self.W = 0.41
         self.xc = cylinder_center[0]
         self.yc = cylinder_center[1]
         self.R = cylinder_radius
 
         # Boundaries
-        self.y_min = wall_coords[:, 1].min()
-        self.y_max = wall_coords[:, 1].max()
-        
-        self.x_min = wall_coords[:, 0].min()
-        self.x_max = wall_coords[:, 0].max()
-        self.L = self.x_max - self.x_min
-        self.W = self.y_max - self.y_min
+        self.x_min, self.x_max = 0.0, 2.2
+        self.y_min, self.y_max = 0.0, 0.41
 
     # ==========================================================
     # 1. Particular Solution (The "Interpolation" Function)
@@ -716,13 +720,20 @@ class Stokes2DHardAll(Stokes2D): # Apart from Wall and Cylinder boundary, also h
            - Decays naturally as 1/r^2.
         """
         # 1. Background Flow (Parabolic Poiseuille)
+        # u_channel = 4 * U_max * y * (W - y) / W^2
         u_channel = 4.0 * self.u_max * (y * (self.W - y)) / (self.W**2)
 
         # 2. Compute Squared Euclidean Distance from Center
+        # r^2 = (x - xc)^2 + (y - yc)^2
         r_sq = (x - self.xc)**2 + (y - self.yc)**2
         
         # 3. Algebraic Shielding
+        # We clamp r_sq to be at least R^2 to avoid division by zero 
+        # inside the cylinder (though we only solve outside, this is safe).
         safe_r_sq = jnp.maximum(r_sq, self.R**2)
+        
+        # Factor = 1 - (R^2 / r^2)
+        # This creates a "hole" in the flow exactly the size of the cylinder
         shield = 1.0 - (self.R**2 / safe_r_sq)
 
         # 4. Combine
@@ -746,6 +757,7 @@ class Stokes2DHardAll(Stokes2D): # Apart from Wall and Cylinder boundary, also h
         phi_wall = (y * (self.W - y)) / (self.W**2)
 
         # B. Inflow Constraint (x=0)
+        # Term 'x' vanishes at x=0. Normalized by L.
         phi_in = x / self.L
 
         m = self.config.get("phi_m", 2.0)
@@ -757,8 +769,11 @@ class Stokes2DHardAll(Stokes2D): # Apart from Wall and Cylinder boundary, also h
             phi_out = 1.0 # No constraint at outlet
             phi = (phi_cyl**(-m)+phi_wall**(-m)+phi_in**(-m))**(-1/m) 
 
-        return phi
+        return phi#phi_cyl * phi_wall * phi_in * phi_out
 
+    # ==========================================================
+    # 3. Neural Network Ansatz
+    # ==========================================================
     def neural_net(self, params, x, y):
         x_norm = x / self.L  # rescale x into [0, 1]
         y_norm = y / self.W  # rescale y into [0, 1]
@@ -795,6 +810,256 @@ class Stokes2DHardAll(Stokes2D): # Apart from Wall and Cylinder boundary, also h
             loss_dict["v_out"] = jnp.mean(v_stress_out**2)
 
         return loss_dict
+
+# class Stokes2DHardAll(ForwardBVP):
+#     def __init__(
+#         self,
+#         config,
+#         u_inflow_max, # Scalar max velocity (e.g. 1.5) instead of array
+#         inflow_coords, outflow_coords, wall_coords, # Kept for domain sizing
+#         cylinder_coords,
+#         Re,
+#         cylinder_center=[0.2, 0.2],
+#         cylinder_radius=0.05,
+#         hard_outflow=False # Toggle to hard-constrain outlet to same profile as inlet
+#     ):
+#         super().__init__(config)
+
+#         self.Re = Re
+#         self.hard_outflow = hard_outflow
+#         self.u_max = u_inflow_max
+
+#         # Geometry
+#         # self.L = 2.2
+#         # self.W = 0.41
+#         self.wall_coords = wall_coords
+#         self.cylinder_coords = cylinder_coords
+#         self.noslip_coords = jnp.vstack((self.wall_coords, self.cylinder_coords))
+
+#         # Non-dimensionalized domain length and width
+#         self.L, self.W = self.noslip_coords.max(axis=0) - self.noslip_coords.min(axis=0)
+
+#         self.xc = cylinder_center[0]
+#         self.yc = cylinder_center[1]
+#         self.R = cylinder_radius
+
+#         # Boundaries
+#         self.x_min, self.x_max = 0.0, 2.2
+#         self.y_min, self.y_max = 0.0, 0.41
+
+#         # Coordinate arrays (Only used for plotting/testing now, not loss)
+#         self.inflow_coords = inflow_coords
+#         self.outflow_coords = outflow_coords
+
+#         # Prediction functions
+#         self.u_pred_fn = vmap(self.u_net, (None, 0, 0))
+#         self.v_pred_fn = vmap(self.v_net, (None, 0, 0))
+#         self.p_pred_fn = vmap(self.p_net, (None, 0, 0))
+#         self.r_pred_fn = vmap(self.r_net, (None, 0, 0))
+
+#     # ==========================================================
+#     # 1. Particular Solution (The "Interpolation" Function)
+#     # ==========================================================
+#     # def u_particular(self, x, y):
+#     #     """
+#     #     Constructs a background flow field that satisfies:
+#     #     1. Inflow parabolic profile at x=0
+#     #     2. Zero velocity at Walls (y=0, y=W)
+#     #     3. Zero velocity at Cylinder surface (masked)
+#     #     """
+#     #     # A. Base Parabolic Profile (Satisfies Walls & Inflow)
+#     #     # u_base = 4 * U_max * y * (W - y) / W^2
+#     #     u_base = 4.0 * self.u_max * (y * (self.W - y)) / (self.W**2)
+
+#     #     # B. Cylinder Mask
+#     #     # We need a function that is 0 on cylinder, 1 far away.
+#     #     # We use sigmoid or tanh of the squared distance.
+#     #     # dist_sq = (x-xc)^2 + (y-yc)^2 - R^2
+#     #     # mask = tanh( alpha * dist_sq )
+#     #     dist_sq = (x - self.xc)**2 + (y - self.yc)**2 - self.R**2
+        
+#     #     # Scaling factor 1000 ensures the transition from 0 to 1 is sharp 
+#     #     # but differentiable.
+#     #     cyl_mask = jnp.tanh(1000.0 * dist_sq) 
+
+#     #     # If hard_outflow is False, u_base is valid everywhere (it just flows through).
+#     #     # If hard_outflow is True, we assume u_out = u_in, so u_base is still valid.
+#     #     # If u_out were different, we would do: u_base = u_in * (1-x/L) + u_out * (x/L)
+        
+#     #     return u_base * cyl_mask
+#     def u_particular(self, x, y):
+#         """
+#         Constructs a particular solution using Algebraic Shielding.
+        
+#         1. Background: Poiseuille Flow (Matches Walls & Inflow)
+#         2. Shielding:   (1 - R^2 / r^2) 
+#            - Derived from Potential Flow theory.
+#            - Smoothly zeros out velocity at cylinder surface.
+#            - Decays naturally as 1/r^2.
+#         """
+#         # 1. Background Flow (Parabolic Poiseuille)
+#         # u_channel = 4 * U_max * y * (W - y) / W^2
+#         u_channel = 4.0 * self.u_max * (y * (self.W - y)) / (self.W**2)
+
+#         # 2. Compute Squared Euclidean Distance from Center
+#         # r^2 = (x - xc)^2 + (y - yc)^2
+#         r_sq = (x - self.xc)**2 + (y - self.yc)**2
+        
+#         # 3. Algebraic Shielding
+#         # We clamp r_sq to be at least R^2 to avoid division by zero 
+#         # inside the cylinder (though we only solve outside, this is safe).
+#         safe_r_sq = jnp.maximum(r_sq, self.R**2)
+        
+#         # Factor = 1 - (R^2 / r^2)
+#         # This creates a "hole" in the flow exactly the size of the cylinder
+#         shield = 1.0 - (self.R**2 / safe_r_sq)
+
+#         # 4. Combine
+#         return u_channel * shield
+
+#     # ==========================================================
+#     # 2. Distance / Filter Function (The "Zero" Enforcer)
+#     # ==========================================================
+#     def filter_phi(self, x, y):
+#         """
+#         Must be zero on ALL Hard boundaries:
+#         - Cylinder
+#         - Walls
+#         - Inflow (x=0)
+#         - Outflow (x=L) [Only if hard_outflow=True]
+#         """
+#         # A. Cylinder & Walls (Same as before)
+#         phi_cyl = ((x - self.xc)**2 + (y - self.yc)**2 - self.R**2) / (self.R**2)
+#         phi_wall = (y * (self.W - y)) / (self.W**2)
+
+#         # B. Inflow Constraint (x=0)
+#         # Term 'x' vanishes at x=0. Normalized by L.
+#         phi_in = x / self.L
+
+#         # C. Outflow Constraint (x=L)
+#         if self.hard_outflow:
+#             phi_out = (self.L - x) / self.L
+#         else:
+#             phi_out = 1.0 # No constraint at outlet
+
+#         return phi_cyl * phi_wall * phi_in * phi_out
+
+#     # ==========================================================
+#     # 3. Neural Network Ansatz
+#     # ==========================================================
+#     def neural_net(self, params, x, y):
+#         x = x / self.L  # rescale x into [0, 1]
+#         y = y / self.W  # rescale y into [0, 1]
+#         z = jnp.stack([x, y])
+#         outputs = self.state.apply_fn(params, z)
+#         u = outputs[0]
+#         v = outputs[1]
+#         p = outputs[2]
+#         return u, v, p
+
+#     def u_net(self, params, x, y):
+#         # Normalize inputs for the network
+#         # x_norm = x / self.L
+#         # y_norm = y / self.W
+        
+#         # # Raw Network Output
+#         # N_u = self.state.apply_fn(params, jnp.stack([x_norm, y]))[0]
+#         u, _, _ = self.neural_net(params, x, y)
+#         # Combine: u = u_particular + phi * N_u
+#         return self.u_particular(x, y) + self.filter_phi(x, y) * u
+
+#     def v_net(self, params, x, y):
+#         # v_particular is 0 everywhere (assuming horizontal inflow)
+#         # so v = 0 + phi * N_v
+        
+#         # x_norm = x / self.L
+#         # y_norm = y / self.W
+#         # N_v = self.state.apply_fn(params, jnp.stack([x_norm, y_norm]))[1]
+#         _, v, _ = self.neural_net(params, x, y)
+#         return self.filter_phi(x, y) * v # Enforces v=0 at Inlet/Walls/Cyl
+
+#     def p_net(self, params, x, y):
+#         # Pressure has no hard constraints
+#         _, _, p = self.neural_net(params, x, y)
+#         return p
+#     # ... (r_net, losses implemented as before) ...
+    
+#     def r_net(self, params, x, y):
+#         u, v, p = self.neural_net(params, x, y)
+
+#         (u_x, u_y), (v_x, v_y), (p_x, p_y) = jacrev(self.neural_net, argnums=(1, 2))(params, x, y)
+
+#         u_hessian = hessian(self.u_net, argnums=(1, 2))(params, x, y)
+#         v_hessian = hessian(self.v_net, argnums=(1, 2))(params, x, y)
+
+#         u_xx = u_hessian[0][0]
+#         u_yy = u_hessian[1][1]
+
+#         v_xx = v_hessian[0][0]
+#         v_yy = v_hessian[1][1]
+
+#         ru = -(u_xx + u_yy) + p_x
+#         rv = -(v_xx + v_yy) + p_y
+#         rc = u_x + v_y
+
+#         u_out = u_x - p
+#         v_out = v_x
+
+#         return ru, rv, rc, u_out, v_out
+    
+#     def ru_net(self, params, x, y):
+#         ru, _, _, _, _ = self.r_net(params, x, y)
+#         return ru
+
+#     def rv_net(self, params, x, y):
+#         _, rv, _, _, _ = self.r_net(params, x, y)
+#         return rv
+
+#     def rc_net(self, params, x, y):
+#         _, _, rc, _, _ = self.r_net(params, x, y)
+#         return rc
+
+#     def u_out_net(self, params, x, y):
+#         _, _, _, u_out, _ = self.r_net(params, x, y)
+#         return u_out
+
+#     def v_out_net(self, params, x, y):
+#         _, _, _, _, v_out = self.r_net(params, x, y)
+#         return v_out
+
+#     @partial(jit, static_argnums=(0,))
+#     def losses(self, params, batch):
+#         # With Hard constraints, Boundary Losses (u_in, u_noslip) are strictly 0.
+#         # We only need:
+#         # 1. PDE Residuals
+#         # 2. Outflow Loss (ONLY if hard_outflow is False)
+
+#         ru_pred, rv_pred, rc_pred, _, _ = self.r_pred_fn(
+#             params, batch[:, 0], batch[:, 1]
+#         )
+
+#         ru_loss = jnp.mean(ru_pred**2)
+#         rv_loss = jnp.mean(rv_pred**2)
+#         rc_loss = jnp.mean(rc_pred**2)
+        
+#         loss_dict = {
+#             "ru": ru_loss,
+#             "rv": rv_loss,
+#             "rc": rc_loss
+#         }
+
+#         if not self.hard_outflow:
+#             # If soft outflow, we need to minimize stress at the outlet points
+#             # We need to sample specific outlet points (which might not be in 'batch')
+#             # For simplicity, assuming 'batch' covers the domain or we pass separate coords.
+#             # Ideally, use self.outflow_coords here:
+#             _, _, _, u_stress_out, v_stress_out = self.r_pred_fn(
+#                 params, self.outflow_coords[:,0], self.outflow_coords[:,1]
+#             )
+#             loss_dict["u_out"] = jnp.mean(u_stress_out**2)
+#             loss_dict["v_out"] = jnp.mean(v_stress_out**2)
+
+#         return loss_dict
 
 class StokesEvaluator(BaseEvaluator):
     def __init__(self, config, model):

@@ -42,7 +42,10 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
     res_sampler = iter(UniformSampler(dom, config.training.batch_size_per_device))
 
     # Initialize model
-    model = models.AllenCahn(config, u0, t_star, x_star)
+    if 'Time' in config.arch.arch_name:
+        model = models.AllenCahnTime(config, u0, t_star, x_star)
+    else:
+        model = models.AllenCahn(config, u0, t_star, x_star)
 
     # Initialize evaluator
     evaluator = models.AllenCanhEvaluator(config, model)
