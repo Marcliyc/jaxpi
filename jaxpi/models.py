@@ -55,6 +55,9 @@ def _create_arch(config):
 
     elif config.arch_name == "TimeDependentPINN":
         arch = archs.TimeDependentPINN(**config)
+    
+    elif config.arch_name == "PINN_Gaussian":
+        arch = archs.PINN_Gaussian(**config)
 
     else:
         raise NotImplementedError(f"Arch {config.arch_name} not supported yet!")
@@ -132,9 +135,9 @@ def _create_train_state(config):
     # Initialize network
     arch = _create_arch(config.arch)
     x = jnp.ones(config.input_dim)
-    try:
+    if 'Time' not in arch.arch_name:
         params = arch.init(random.PRNGKey(config.seed), x)
-    except TypeError:
+    else:
         # For TimeDependentPINN which requires two inputs
         t = 1.0
         params = arch.init(random.PRNGKey(config.seed), x, t)

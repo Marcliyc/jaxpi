@@ -186,6 +186,7 @@ class ModifiedMlp(nn.Module):
     periodicity: Union[None, Dict] = None
     fourier_emb: Union[None, Dict] = None
     pyramid: Union[None, Dict] = None
+    gaussian: Union[None, Dict] = None
     reparam: Union[None, Dict] = None
 
     def setup(self):
@@ -195,6 +196,9 @@ class ModifiedMlp(nn.Module):
     def __call__(self, x):
         if self.periodicity:
             x = PeriodEmbs(**self.periodicity)(x)
+        
+        if self.gaussian:
+            x = GaussianNd_Diag(**self.gaussian)(x)
 
         if self.fourier_emb:
             x = FourierEmbs(**self.fourier_emb)(x)
@@ -515,6 +519,35 @@ class GaussianNd_Shared(nn.Module):
         output = pdf @ self.weight
 
         return output
+    
+class PINN_Gaussian(nn.Module):
+    features: Sequence[int]
+    out_dim: int
+    # pos_enc: int
+    num_gaussian: int = 100
+    grid_range: float = 2.
+    grid_shift: Union[None, jnp.ndarray] = None
+    sigmas_range : float = 15.
+    mlp_dim: int = 4
+    ndim: int = 2
+    activation: str = 'tanh'
+    reparam: Union[None, Dict] = None
+    arch_name: Optional[str] = "PINN_Gaussian"
+
+    def setup(self):
+        self.activation_fn = _get_activation(self.activation)
+
+    @nn.compact
+    def __call__(self, x):
+        X = GaussianNd_Diag(ndim=self.ndim, num_gaussian=self.num_gaussian, grid_range=self.grid_range, grid_shift=self.grid_shift, sigmas_range=self.sigmas_range, mlp_dim=self.mlp_dim)(x)
+        # X = Gaussian3d_Full(self.num_gaussian, self.grid_range, self.sigmas_range, self.mlp_dim)(x,y,z)
+        
+        #init = nn.initializers.glorot_normal()
+        for fs in self.features[:-1]:
+            X = Dense(fs, reparam=self.reparam)(X)
+            X = self.activation_fn(X)
+        X = Dense(self.features[-1], reparam=self.reparam)(X)
+        return X
 
 class SpatialFeatureGaussian(nn.Module):
     num_levels: int = 6

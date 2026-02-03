@@ -55,8 +55,8 @@ class AllenCahn(ForwardIVP):
         # Split residuals into chunks
         r_pred = r_pred.reshape(self.num_chunks, -1)
         r_pred = jnp.clip(r_pred, -100.0, 100.0)
-        #l = jnp.mean(r_pred**2, axis=1)
-        l = jnp.mean(huber_loss(r_pred,delta=1.0),axis=1)
+        l = jnp.mean(r_pred**2, axis=1)
+        #l = jnp.mean(huber_loss(r_pred,delta=1.0),axis=1)
         w = lax.stop_gradient(jnp.exp(-self.tol * (self.M @ l)))
         return l, w
 
