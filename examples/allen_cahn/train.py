@@ -50,11 +50,17 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
     # Initialize evaluator
     evaluator = models.AllenCanhEvaluator(config, model)
 
+    grad_layer_names = model.get_grad_layer_names()
+
     print("Waiting for JIT...")
     start_time = time.time()
     for step in range(config.training.max_steps):
         batch = next(res_sampler)
-        model.state = model.step(model.state, batch)
+
+        if config.logging.log_grads:
+            model.state, max_grad_norm, max_grad_idx = model.step_with_grad_stats(model.state, batch)
+        else:
+            model.state = model.step(model.state, batch)
 
         if config.weighting.scheme in ["grad_norm", "ntk"]:
             if step % config.weighting.update_every_steps == 0:
@@ -67,6 +73,14 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
                 state = jax.device_get(tree_map(lambda x: x[0], model.state))
                 batch = jax.device_get(tree_map(lambda x: x[0], batch))
                 log_dict = evaluator(state, batch, u_ref)
+
+                if config.logging.log_grads:
+                    max_grad_norm_host = float(jax.device_get(max_grad_norm)[0])
+                    max_grad_idx_host = int(jax.device_get(max_grad_idx)[0])
+                    log_dict["max_layer_grad_norm"] = max_grad_norm_host
+                    log_dict["max_layer_grad_idx"] = max_grad_idx_host
+                    log_dict["max_layer_grad_name"] = grad_layer_names[max_grad_idx_host]
+
                 wandb.log(log_dict, step)
 
                 end_time = time.time()
