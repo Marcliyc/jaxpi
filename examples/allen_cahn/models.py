@@ -229,5 +229,8 @@ class AllenCanhEvaluator(BaseEvaluator):
 
         if self.config.logging.log_preds:
             self.log_preds(state.params)
+        
+        # if self.config.logging.log_grads:
+        #     self.log_grads(state.params, batch)
 
         return self.log_dict

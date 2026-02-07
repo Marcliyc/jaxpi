@@ -57,7 +57,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
     for step in range(config.training.max_steps):
         batch = next(res_sampler)
 
-        if config.logging.log_grads:
+        if config.logging.log_grads and step % config.logging.log_every_steps == 0:
             model.state, max_grad_norm, max_grad_idx = model.step_with_grad_stats(model.state, batch)
         else:
             model.state = model.step(model.state, batch)

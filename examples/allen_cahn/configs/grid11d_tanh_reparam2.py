@@ -15,8 +15,8 @@ def get_config():
     # Arch: Time-Dependent Multi-Res Grid
     config.arch = arch = ml_collections.ConfigDict()
     arch.arch_name = "TimeDependentPINN"
-    arch.num_levels = 5             # 4-5 levels is usually sufficient for 1D AC; 7 might be overkill/slower
-    arch.base_resolution = 16        # Start slightly coarser
+    arch.num_levels = 6             # 4-5 levels is usually sufficient for 1D AC; 7 might be overkill/slower
+    arch.base_resolution = 4        # Start slightly coarser
     arch.feature_dim = 64           # 256 is very heavy for 1D; 64 or 128 is usually enough
     arch.attn_mode = (1,) # [1] = Periodic BCs (Repeat)
     arch.interp_method = 'cubic'
@@ -69,8 +69,8 @@ def get_config():
     logging.log_losses = True
     logging.log_weights = True
     logging.log_preds = True        # Turn this ON to see if the grid is learning physically valid sol.
-    logging.log_grads = False
-    logging.log_ntk = False
+    logging.log_grads = True
+    logging.log_ntk = True
 
     # Saving
     config.saving = saving = ml_collections.ConfigDict()

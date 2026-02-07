@@ -9,6 +9,8 @@ def get_log_keys(log_dict):
             key_list.append(key)
         elif key.endswith("_error"):
             key_list.append(key)
+        elif "max_layer_grad" in key:
+            key_list.append(key)
     return key_list
 
 
@@ -31,7 +33,13 @@ class Logger:
     def log_iter(self, step, start_time, end_time, log_dict):
         log_keys = get_log_keys(log_dict)
 
-        log_list = [[key, "{:.3e}".format(log_dict[key])] for key in log_keys]
+        #log_list = [[key, "{:.3e}".format(log_dict[key])] for key in log_keys if type(log_dict[key]) in [float, int] else [key, log_dict[key]]]
+        log_list = []
+        for key in log_keys:
+            if type(log_dict[key]) in [float, int]:
+                log_list.append([key, "{:.3e}".format(log_dict[key])])
+            else:
+                log_list.append([key, log_dict[key]])
 
         message = tabulate(
             log_list,
