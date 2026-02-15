@@ -138,11 +138,12 @@ class FourierTimeEmbedding(nn.Module):
 
     @nn.compact
     def __call__(self, t: float) -> jnp.ndarray:
-        t = jnp.atleast_1d(t)[0]
-        half_dim = self.embed_dim // 2
-        freqs = jnp.exp(-jnp.log(self.max_period) * jnp.arange(half_dim) / half_dim)
-        args = t * freqs * 2 * jnp.pi
-        embedding = jnp.concatenate([jnp.sin(args), jnp.cos(args)])
+        #$t = jnp.atleast_1d(t)[0]
+        #half_dim = self.embed_dim // 2
+        #freqs = jnp.exp(-jnp.log(self.max_period) * jnp.arange(half_dim) / half_dim)
+        #args = t * freqs * 2 * jnp.pi
+        #embedding = jnp.concatenate([jnp.sin(args), jnp.cos(args)])
+        embedding = jnp.atleast_1d(t)
         embedding = Dense(features=self.embed_dim * 2, reparam=self.reparam)(embedding)
         embedding = self.activation_fn(embedding)
         return Dense(features=self.embed_dim, reparam=self.reparam)(embedding)
@@ -246,20 +247,20 @@ class MlpBlock(nn.Module):
         return x
     
 # Multi-resolution grid
-# def cubic_bspline_weight(t):
-#     t = jnp.abs(t)
-#     return jnp.where(
-#         t < 1.0,
-#         2.0/3.0 - t**2 + 0.5*t**3,
-#         jnp.where(t < 2.0, (2.0 - t)**3 / 6.0, 0.0)
-#     )
 def cubic_bspline_weight(t):
     t = jnp.abs(t)
     return jnp.where(
         t < 1.0,
-        2.0/3.0 - 1.5*t**2 + 0.5*t**3,
-        jnp.where(t < 2.0, (2.0 - t)**3 / 2.0, 0.0)
+        2.0/3.0 - t**2 + 0.5*t**3,
+        jnp.where(t < 2.0, (2.0 - t)**3 / 6.0, 0.0)
     )
+# def cubic_bspline_weight(t):
+#     t = jnp.abs(t)
+#     return jnp.where(
+#         t < 1.0,
+#         2.0/3.0 - 1.5*t**2 + 0.5*t**3,
+#         jnp.where(t < 2.0, (2.0 - t)**3 / 2.0, 0.0)
+#     )
 
 def linear_weight(t):
     return jnp.maximum(0.0, 1.0 - jnp.abs(t))
@@ -443,14 +444,22 @@ class SpatialFeaturePyramid(nn.Module):
             features.append(interpolate_grid_nd(grid, x, res=res, attn_mode=self.attn_mode, x_min=self.x_min, x_max=self.x_max))
             #features.append(interpolate_grid_2d(grid, x, x_min=self.x_min, x_max=self.x_max))
         return features[::-1]
+    
+# def normalize(x, x_min, x_max, to="minus1_1"):
+#     x = (x - x_min) / (x_max - x_min)
+#     if to == "minus1_1":
+#         return 2.0 * x - 1.0
+#     return x
 
 class GaussianNd_Diag(nn.Module):
     ndim: int = 2
     num_gaussian: int = 100
     grid_range: float = 1.
-    grid_shift: Union[None, jnp.ndarray] = None
+    #grid_shift: Union[None, jnp.ndarray] = None
     sigmas_range: float = 0.5
     mlp_dim: int = 4
+    x_min: Union[None, jnp.ndarray, float, int] = None
+    x_max: Union[None, jnp.ndarray, float, int] = None
 
     def setup(self):
         # Parameters for N dimensions
@@ -462,8 +471,9 @@ class GaussianNd_Diag(nn.Module):
 
     @nn.compact
     def __call__(self, x):
-        if self.grid_shift:
-            x = x+self.grid_shift
+        # if self.grid_shift:
+        #     x = x+self.grid_shift
+        x = (x - self.x_min) / (self.x_max - self.x_min) * self.grid_range
 
         x = jnp.atleast_1d(x)
         # x shape: (ndim,)
@@ -526,20 +536,23 @@ class PINN_Gaussian(nn.Module):
     # pos_enc: int
     num_gaussian: int = 100
     grid_range: float = 2.
-    grid_shift: Union[None, jnp.ndarray] = None
+    #grid_shift: Union[None, jnp.ndarray] = None
     sigmas_range : float = 15.
     mlp_dim: int = 4
     ndim: int = 2
     activation: str = 'tanh'
     reparam: Union[None, Dict] = None
     arch_name: Optional[str] = "PINN_Gaussian"
+    x_min: Union[None, jnp.ndarray, float, int] = None
+    x_max: Union[None, jnp.ndarray, float, int] = None
+
 
     def setup(self):
         self.activation_fn = _get_activation(self.activation)
 
     @nn.compact
     def __call__(self, x):
-        X = GaussianNd_Diag(ndim=self.ndim, num_gaussian=self.num_gaussian, grid_range=self.grid_range, grid_shift=self.grid_shift, sigmas_range=self.sigmas_range, mlp_dim=self.mlp_dim)(x)
+        X = GaussianNd_Diag(ndim=self.ndim, num_gaussian=self.num_gaussian, grid_range=self.grid_range,  sigmas_range=self.sigmas_range, mlp_dim=self.mlp_dim, x_min=self.x_min, x_max=self.x_max)(x)
         # X = Gaussian3d_Full(self.num_gaussian, self.grid_range, self.sigmas_range, self.mlp_dim)(x,y,z)
         
         #init = nn.initializers.glorot_normal()
@@ -626,7 +639,7 @@ class TimeConditionedDecoder(nn.Module):
         self.activation_fn = _get_activation(self.activation)
     
     @nn.compact
-    def __call__(self, features: list, t: float) -> jnp.ndarray:
+    def __call__(self, features: list, t: float, return_states: bool = False):
         L = len(features)
         dim = features[0].shape[-1]
         hidden = dim * self.hidden_mult
@@ -634,17 +647,43 @@ class TimeConditionedDecoder(nn.Module):
         t_embed = FourierTimeEmbedding(embed_dim=self.time_embed_dim, max_period=self.max_period, reparam=self.reparam)(t)
 
         h = features[0]
+        states = [h] if return_states else None
         for k in range(L - 1):
             h = TimeConditionedGatedBlock(hidden_dim=hidden, name=f'fusion_{k}', activation=self.activation, reparam=self.reparam)(
                 h, features[k + 1], t_embed
             )
+            if return_states:
+                states.append(h)
         
         h = jnp.concatenate([h, t_embed])
         h = Dense(features=128, name='head1', reparam=self.reparam)(h)
         h = self.activation_fn(h)
         h = Dense(features=64, name='head2', reparam=self.reparam)(h)
         h = self.activation_fn(h)
-        return Dense(features=self.out_dim, name='head_out', reparam=self.reparam)(h)#[0]
+        out = Dense(features=self.out_dim, name='head_out', reparam=self.reparam)(h)#[0]
+        if return_states:
+            return out, states
+        return out
+
+    @nn.compact
+    def decode_from(self, h: jnp.ndarray, features: list, t: float, start_idx: int) -> jnp.ndarray:
+        L = len(features)
+        dim = features[0].shape[-1]
+        hidden = dim * self.hidden_mult
+
+        t_embed = FourierTimeEmbedding(embed_dim=self.time_embed_dim, max_period=self.max_period, reparam=self.reparam)(t)
+
+        for k in range(start_idx, L - 1):
+            h = TimeConditionedGatedBlock(hidden_dim=hidden, name=f'fusion_{k}', activation=self.activation, reparam=self.reparam)(
+                h, features[k + 1], t_embed
+            )
+
+        h = jnp.concatenate([h, t_embed])
+        h = Dense(features=128, name='head1', reparam=self.reparam)(h)
+        h = self.activation_fn(h)
+        h = Dense(features=64, name='head2', reparam=self.reparam)(h)
+        h = self.activation_fn(h)
+        return Dense(features=self.out_dim, name='head_out', reparam=self.reparam)(h)
     
 class TimeDependentPINN(nn.Module):
     arch_name: Optional[str] = "TimeDependentPINN"
@@ -673,6 +712,37 @@ class TimeDependentPINN(nn.Module):
         )(features, t)
         #spatial_mask = x[0] * (1.0 - x[0]) * x[1] * (1.0 - x[1]) * 16.0
         return u #* spatial_mask
+
+    @nn.compact
+    def forward_with_states(self, x: jnp.ndarray, t: float):
+        if self.pyramid:
+            features = SpatialFeaturePyramid(**self.pyramid)(x)
+        elif self.gaussian:
+            features = SpatialFeatureGaussian(**self.gaussian)(x)
+        u, states = TimeConditionedDecoder(
+            hidden_mult=self.hidden_mult,
+            time_embed_dim=self.time_embed_dim,
+            max_period=self.max_period,
+            out_dim=self.out_dim,
+            activation=self.activation,
+            reparam=self.reparam,
+        )(features, t, return_states=True)
+        return u, states
+
+    @nn.compact
+    def decode_from(self, x: jnp.ndarray, t: float, h: jnp.ndarray, start_idx: int) -> jnp.ndarray:
+        if self.pyramid:
+            features = SpatialFeaturePyramid(**self.pyramid)(x)
+        elif self.gaussian:
+            features = SpatialFeatureGaussian(**self.gaussian)(x)
+        return TimeConditionedDecoder(
+            hidden_mult=self.hidden_mult,
+            time_embed_dim=self.time_embed_dim,
+            max_period=self.max_period,
+            out_dim=self.out_dim,
+            activation=self.activation,
+            reparam=self.reparam,
+        ).decode_from(h, features, t, start_idx)
 
 class DeepONet(nn.Module):
     arch_name: Optional[str] = "DeepONet"

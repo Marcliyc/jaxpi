@@ -9,7 +9,7 @@ def get_config():
     # Weights & Biases
     config.wandb = wandb = ml_collections.ConfigDict()
     wandb.project = "PINN-AllenCahn"
-    wandb.name = "gaussian"
+    wandb.name = "gaussian2"
     wandb.tag = None
 
     # Arch: Time-Dependent Multi-Res Grid
@@ -18,9 +18,9 @@ def get_config():
     arch.ndim = 2
     arch.grid_range = 2
     #arch.grid_shift = 1
-    arch.num_gaussian = 100
-    arch.sigmas_range = 0.1
-    arch.mlp_dim = 4
+    arch.num_gaussian = 4000
+    arch.sigmas_range = 0.025
+    arch.mlp_dim = 1
     arch.features = [16]
     arch.out_dim = 1
     arch.activation = "tanh"
@@ -50,7 +50,7 @@ def get_config():
     # Training
     config.training = training = ml_collections.ConfigDict()
     training.max_steps = 300000     # Grid methods often converge faster than MLPs
-    training.batch_size_per_device = 8192    # Large batch size is critical for grid-based methods
+    training.batch_size_per_device = 4096    # Large batch size is critical for grid-based methods
 
     # Weighting
     config.weighting = weighting = ml_collections.ConfigDict()

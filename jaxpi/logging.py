@@ -9,7 +9,7 @@ def get_log_keys(log_dict):
             key_list.append(key)
         elif key.endswith("_error"):
             key_list.append(key)
-        elif "max_layer_grad" in key:
+        elif "grad" in key:
             key_list.append(key)
     return key_list
 

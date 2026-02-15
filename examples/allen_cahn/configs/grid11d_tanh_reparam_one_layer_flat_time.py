@@ -9,30 +9,31 @@ def get_config():
     # Weights & Biases
     config.wandb = wandb = ml_collections.ConfigDict()
     wandb.project = "PINN-AllenCahn"
-    wandb.name = "gaussian"
+    wandb.name = "grid_1+1D_tanh_reparam_one_layer_flat_time"
     wandb.tag = None
 
     # Arch: Time-Dependent Multi-Res Grid
     config.arch = arch = ml_collections.ConfigDict()
-    arch.arch_name = "PINN_Gaussian"
-    arch.ndim = 2
-    arch.grid_range = 2
-    #arch.grid_shift = 1
-    arch.num_gaussian = 100
-    arch.sigmas_range = 0.1
-    arch.mlp_dim = 4
-    arch.features = [16]
+    arch.arch_name = "TimeDependentPINN"
+
+    arch.pyramid = ml_collections.ConfigDict()
+    arch.pyramid.num_levels = 1             # 4-5 levels is usually sufficient for 1D AC; 7 might be overkill/slower
+    arch.pyramid.base_resolution = 256        # Start slightly coarser
+    arch.pyramid.feature_dim = 48           # 256 is very heavy for 1D; 64 or 128 is usually enough
+    arch.pyramid.attn_mode = (1,) # [1] = Periodic BCs (Repeat)
+    arch.pyramid.interp_method = 'cubic'
+    arch.pyramid.x_min = -1.0
+    arch.pyramid.x_max = 1.0
+
+    arch.time_embed_dim = 256
+    arch.max_period = 2.0
+    arch.hidden_mult = 2            # Kept the second value from your file
     arch.out_dim = 1
     arch.activation = "tanh"
-    # arch.reparam = ml_collections.ConfigDict(
-    #     {"type": "weight_fact", "mean": 1.0, "stddev": 0.1}
-    # )
-
+    arch.reparam = ml_collections.ConfigDict(
+        {"type": "weight_fact", "mean": 1.0, "stddev": 0.1}
+    )
     
-    # # Domain boundaries for the grid (Must match your dataset)
-    arch.x_min = jnp.array([0.0, -1.0])
-    arch.x_max = jnp.array([1.0, 1.0])
-
     # Optim
     config.optim = optim = ml_collections.ConfigDict()
     optim.optimizer = "Adam"
@@ -43,19 +44,16 @@ def get_config():
     optim.beta2 = 0.999
     optim.eps = 1e-8
     optim.grad_accum_steps = 0
-    #optim.grad_clip = 5.0
-    #optim.weight_decay=1e-5
-    #optim.warmup_steps = 1000
 
     # Training
     config.training = training = ml_collections.ConfigDict()
     training.max_steps = 300000     # Grid methods often converge faster than MLPs
-    training.batch_size_per_device = 8192    # Large batch size is critical for grid-based methods
+    training.batch_size_per_device = 8192
 
     # Weighting
     config.weighting = weighting = ml_collections.ConfigDict()
     weighting.scheme = 'ntk'  # 'ntk' is heavy; grad_norm is a good balance
-    weighting.init_weights = ml_collections.ConfigDict({"ics": 1.0, "res": 1.0, "bc": 0.5, "bcx": 0.5}) # Emphasize ICs slightly
+    weighting.init_weights = ml_collections.ConfigDict({"ics": 1.0, "res": 1.0}) # Emphasize ICs slightly
     weighting.momentum = 0.9
     weighting.update_every_steps = 1000
 
@@ -77,11 +75,11 @@ def get_config():
 
     # Saving
     config.saving = saving = ml_collections.ConfigDict()
-    saving.save_every_steps = 10000
-    saving.num_keep_ckpts = 3
+    saving.save_every_steps = 2000
+    saving.num_keep_ckpts = 100
 
-    config.input_dim = 2
+    # CRITICAL FIX: Spatial dimension only
+    config.input_dim = 1
     config.seed = 42
-    config.bc_loss = True
 
     return config

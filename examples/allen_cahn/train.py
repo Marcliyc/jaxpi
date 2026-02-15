@@ -58,7 +58,8 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
         batch = next(res_sampler)
 
         if config.logging.log_grads and step % config.logging.log_every_steps == 0:
-            model.state, max_grad_norm, max_grad_idx = model.step_with_grad_stats(model.state, batch)
+            #model.state, max_grad_norm, max_grad_idx = model.step_with_grad_stats(model.state, batch)
+            model.state, grad_norms = model.step_with_grad_stats(model.state, batch)
         else:
             model.state = model.step(model.state, batch)
 
@@ -75,11 +76,16 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
                 log_dict = evaluator(state, batch, u_ref)
 
                 if config.logging.log_grads:
-                    max_grad_norm_host = float(jax.device_get(max_grad_norm)[0])
-                    max_grad_idx_host = int(jax.device_get(max_grad_idx)[0])
-                    log_dict["max_layer_grad_norm"] = max_grad_norm_host
-                    log_dict["max_layer_grad_idx"] = max_grad_idx_host
-                    log_dict["max_layer_grad_name"] = grad_layer_names[max_grad_idx_host]
+                    # max_grad_norm_host = float(jax.device_get(max_grad_norm)[0])
+                    # max_grad_idx_host = int(jax.device_get(max_grad_idx)[0])
+                    # log_dict["max_layer_grad_norm"] = max_grad_norm_host
+                    # log_dict["max_layer_grad_idx"] = max_grad_idx_host
+                    # log_dict["max_layer_grad_name"] = grad_layer_names[max_grad_idx_host]
+                    grad_norms_host = jax.device_get(grad_norms)[0]
+                    for name, norm in zip(grad_layer_names, grad_norms_host):
+                        log_dict[f"{name}_grad_norm"] = float(norm)
+                    log_dict['max_grad_layer'] = grad_layer_names[jnp.argmax(grad_norms_host)]
+                    log_dict['max_grad_norm'] = float(jnp.max(grad_norms_host))
 
                 wandb.log(log_dict, step)
 

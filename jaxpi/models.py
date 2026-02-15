@@ -249,11 +249,11 @@ class PINN:
         flat_grads = flatten_dict(grads, sep="/")
         grad_norms = [jnp.linalg.norm(flatten_pytree(g)) for g in flat_grads.values()]
         grad_norms = jnp.stack(grad_norms)
-        max_grad_idx = jnp.argmax(grad_norms)
-        max_grad_norm = grad_norms[max_grad_idx]
+        # max_grad_idx = jnp.argmax(grad_norms)
+        # max_grad_norm = grad_norms[max_grad_idx]
 
         state = state.apply_gradients(grads=grads)
-        return state, max_grad_norm, max_grad_idx
+        return state, grad_norms #max_grad_norm, max_grad_idx
 
     def get_grad_layer_names(self):
         params = tree_map(lambda x: x[0], self.state.params)

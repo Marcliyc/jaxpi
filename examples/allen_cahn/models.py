@@ -27,6 +27,9 @@ class AllenCahn(ForwardIVP):
         self.t_star = t_star
         self.x_star = x_star
 
+        self.x0 = x_star[0]
+        self.x1 = x_star[-1]
+
         self.t0 = t_star[0]
         self.t1 = t_star[-1]
 
@@ -54,7 +57,7 @@ class AllenCahn(ForwardIVP):
         r_pred = vmap(self.r_net, (None, 0, 0))(params, t_sorted, batch[:, 1])
         # Split residuals into chunks
         r_pred = r_pred.reshape(self.num_chunks, -1)
-        r_pred = jnp.clip(r_pred, -100.0, 100.0)
+        #r_pred = jnp.clip(r_pred, -100.0, 100.0)
         l = jnp.mean(r_pred**2, axis=1)
         #l = jnp.mean(huber_loss(r_pred,delta=1.0),axis=1)
         w = lax.stop_gradient(jnp.exp(-self.tol * (self.M @ l)))
@@ -75,6 +78,21 @@ class AllenCahn(ForwardIVP):
             res_loss = jnp.mean((r_pred) ** 2)
 
         loss_dict = {"ics": ics_loss, "res": res_loss}
+
+        if self.config.get('bc_loss', False):
+            # Boundary condition loss
+            u_x0 = vmap(self.u_net, (None, 0, None))(params, self.t_star, self.x0)
+            u_x1 = vmap(self.u_net, (None, 0, None))(params, self.t_star, self.x1)
+            bc_loss = jnp.mean((u_x0 - u_x1) ** 2)
+
+            u_xx0 = vmap(grad(self.u_net, argnums=2), (None, 0, None))(params, self.t_star, self.x0)
+            u_xx1 = vmap(grad(self.u_net, argnums=2), (None, 0, None))(params, self.t_star, self.x1)
+            bc_lossx = jnp.mean((u_xx0 - u_xx1) ** 2)
+            #bc_loss += jnp.mean((u_xx0 - u_xx1) ** 2)
+        
+            loss_dict["bc"] = bc_loss
+            loss_dict["bcx"] = bc_lossx
+
         return loss_dict
 
     @partial(jit, static_argnums=(0,))
@@ -103,6 +121,26 @@ class AllenCahn(ForwardIVP):
 
         ntk_dict = {"ics": ics_ntk, "res": res_ntk}
 
+        if self.config.get('bc_loss', False):
+            bc_ntk = vmap(ntk_fn, (None, None, 0, None))(
+                self.u_net, params, self.t_star, self.x0
+            )
+            bc_ntk += vmap(ntk_fn, (None, None, 0, None))(
+                self.u_net, params, self.t_star, self.x1
+            )
+            bc_ntk /= 2.0
+
+            bcx_ntk = vmap(ntk_fn, (None, None, 0, None))(
+                grad(self.u_net, argnums=2), params, self.t_star, self.x0  
+            )
+            bcx_ntk += vmap(ntk_fn, (None, None, 0, None))(
+                grad(self.u_net, argnums=2), params, self.t_star, self.x1
+            )
+            bcx_ntk /= 2.0
+
+            ntk_dict["bc"] = bc_ntk
+            ntk_dict["bcx"] = bcx_ntk
+
         return ntk_dict
 
     @partial(jit, static_argnums=(0,))
@@ -114,8 +152,8 @@ class AllenCahn(ForwardIVP):
 class AllenCahnTime(AllenCahn):
     def __init__(self, config, u0, t_star, x_star):
         super().__init__(config, u0, t_star, x_star)
-        self.x0 = x_star[0]
-        self.x1 = x_star[-1]
+        # self.x0 = x_star[0]
+        # self.x1 = x_star[-1]
 
     def u_net(self, params, t, x):
         #z = jnp.stack([x, t])
@@ -128,15 +166,15 @@ class AllenCahnTime(AllenCahn):
     #     u_pred = vmap(self.u_net, (None, None, 0))(params, self.t0, self.x_star)
     #     ics_loss = jnp.mean((self.u0 - u_pred) ** 2)
 
-    #     # Boundary condition loss
-    #     u_x0 = vmap(self.u_net, (None, 0, None))(params, self.t_star, self.x0)
-    #     u_x1 = vmap(self.u_net, (None, 0, None))(params, self.t_star, self.x1)
-    #     bc_loss = jnp.mean((u_x0 - u_x1) ** 2)
+        # # Boundary condition loss
+        # u_x0 = vmap(self.u_net, (None, 0, None))(params, self.t_star, self.x0)
+        # u_x1 = vmap(self.u_net, (None, 0, None))(params, self.t_star, self.x1)
+        # bc_loss = jnp.mean((u_x0 - u_x1) ** 2)
 
-    #     u_xx0 = vmap(grad(self.u_net, argnums=2), (None, 0, None))(params, self.t_star, self.x0)
-    #     u_xx1 = vmap(grad(self.u_net, argnums=2), (None, 0, None))(params, self.t_star, self.x1)
-    #     # bc_lossx = jnp.mean((u_xx0 - u_xx1) ** 2)
-    #     bc_loss += jnp.mean((u_xx0 - u_xx1) ** 2)
+        # u_xx0 = vmap(grad(self.u_net, argnums=2), (None, 0, None))(params, self.t_star, self.x0)
+        # u_xx1 = vmap(grad(self.u_net, argnums=2), (None, 0, None))(params, self.t_star, self.x1)
+        # # bc_lossx = jnp.mean((u_xx0 - u_xx1) ** 2)
+        # bc_loss += jnp.mean((u_xx0 - u_xx1) ** 2)
 
     #     # Residual loss
     #     if self.config.weighting.use_causal == True:
