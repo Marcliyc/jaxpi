@@ -322,7 +322,11 @@ class ResNet(nn.Module):
                 reparam=self.reparam,
             )(x)
 
-        y = Dense(features=self.out_dim, reparam=self.reparam)(x)
+        if self.pi_init is not None:
+            kernel = self.param("pi_init", constant(self.pi_init), self.pi_init.shape)
+            y = jnp.dot(x, kernel)
+        else:
+            y = Dense(features=self.out_dim, reparam=self.reparam)(x)
 
         return x, y
 
@@ -719,10 +723,10 @@ class PINN_Gaussian(nn.Module):
         X = Dense(self.features[-1], reparam=self.reparam)(X)
         if self.pi_init is not None:
             kernel = self.param("pi_init", constant(self.pi_init), self.pi_init.shape)
-            y = jnp.dot(x, kernel)
+            y = jnp.dot(X, kernel)
 
         else:
-            y = Dense(features=self.out_dim, reparam=self.reparam)(x)
+            y = Dense(features=self.out_dim, reparam=self.reparam)(X)
         return X, y
 
 class SpatialFeatureGaussian(nn.Module):
@@ -797,6 +801,7 @@ class TimeConditionedDecoder(nn.Module):
     out_dim: int = 1
     activation: str = "gelu"
     reparam: Union[None, Dict] = None
+    pi_init: Union[None, jnp.ndarray] = None
 
     def setup(self):
         self.activation_fn = _get_activation(self.activation)
@@ -823,10 +828,14 @@ class TimeConditionedDecoder(nn.Module):
         h = self.activation_fn(h)
         h = Dense(features=64, name='head2', reparam=self.reparam)(h)
         h = self.activation_fn(h)
-        out = Dense(features=self.out_dim, name='head_out', reparam=self.reparam)(h)#[0]
+        if self.pi_init is not None:
+            kernel = self.param("pi_init", constant(self.pi_init), self.pi_init.shape)
+            out = jnp.dot(h, kernel)
+        else:
+            out = Dense(features=self.out_dim, name='head_out', reparam=self.reparam)(h)
         if return_states:
-            return out, states
-        return out
+            return h, out, states
+        return h, out
 
     @nn.compact
     def decode_from(self, h: jnp.ndarray, features: list, t: float, start_idx: int) -> jnp.ndarray:
@@ -858,6 +867,7 @@ class TimeDependentPINN(nn.Module):
     reparam: Union[None, Dict] = None
     pyramid: Union[None, Dict] = None
     gaussian: Union[None, Dict] = None
+    pi_init: Union[None, jnp.ndarray] = None
     
     @nn.compact
     def __call__(self, x: jnp.ndarray, t: float) -> jnp.ndarray:
@@ -865,16 +875,17 @@ class TimeDependentPINN(nn.Module):
             features = SpatialFeaturePyramid(**self.pyramid)(x)
         elif self.gaussian:
             features = SpatialFeatureGaussian(**self.gaussian)(x)
-        u = TimeConditionedDecoder(
+        h, u = TimeConditionedDecoder(
             hidden_mult=self.hidden_mult,
             time_embed_dim=self.time_embed_dim,
             max_period=self.max_period,
             out_dim=self.out_dim,
             activation=self.activation,
             reparam=self.reparam,
+            pi_init=self.pi_init,
         )(features, t)
         #spatial_mask = x[0] * (1.0 - x[0]) * x[1] * (1.0 - x[1]) * 16.0
-        return u #* spatial_mask
+        return h, u #* spatial_mask
 
     @nn.compact
     def forward_with_states(self, x: jnp.ndarray, t: float):
@@ -882,13 +893,14 @@ class TimeDependentPINN(nn.Module):
             features = SpatialFeaturePyramid(**self.pyramid)(x)
         elif self.gaussian:
             features = SpatialFeatureGaussian(**self.gaussian)(x)
-        u, states = TimeConditionedDecoder(
+        _, u, states = TimeConditionedDecoder(
             hidden_mult=self.hidden_mult,
             time_embed_dim=self.time_embed_dim,
             max_period=self.max_period,
             out_dim=self.out_dim,
             activation=self.activation,
             reparam=self.reparam,
+            pi_init=self.pi_init,
         )(features, t, return_states=True)
         return u, states
 

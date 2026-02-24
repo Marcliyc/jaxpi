@@ -15,6 +15,9 @@ def get_config():
     wandb.name = "grid4"
     wandb.tag = None
 
+    # Physics-informed initialization
+    config.use_pi_init = False
+
     # Arch
     config.arch = arch = ml_collections.ConfigDict()
     arch.arch_name = "TimeDependentPINN"
@@ -31,6 +34,7 @@ def get_config():
     arch.x_max = jnp.array([1.0])
     arch.out_dim = 1
     arch.activation = "gelu"
+    arch.pi_init = None
     # arch.periodicity = ml_collections.ConfigDict(
     #     {"period": (jnp.pi,), "axis": (1,), "trainable": (False,)}
     # )

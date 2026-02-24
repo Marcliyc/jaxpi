@@ -12,6 +12,9 @@ def get_config():
     wandb.name = "grid_1+1D_tanh"
     wandb.tag = None
 
+    # Physics-informed initialization
+    config.use_pi_init = False
+
     # Arch: Time-Dependent Multi-Res Grid
     config.arch = arch = ml_collections.ConfigDict()
     arch.arch_name = "TimeDependentPINN"
@@ -25,6 +28,7 @@ def get_config():
     arch.hidden_mult = 4            # Kept the second value from your file
     arch.out_dim = 1
     arch.activation = "tanh"
+    arch.pi_init = None
     
     # Domain boundaries for the grid (Must match your dataset)
     arch.x_min = -1.0

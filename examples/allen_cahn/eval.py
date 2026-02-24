@@ -19,8 +19,13 @@ def evaluate(config: ml_collections.ConfigDict, workdir: str):
     u_ref, t_star, x_star = get_dataset()
     u0 = u_ref[0, :]
 
-    if config.use_pi_init:
-        config.arch.pi_init = jnp.zeros((config.arch.hidden_dim, config.arch.out_dim))
+    if config.get("use_pi_init", False):
+        if config.arch.arch_name == "TimeDependentPINN":
+            config.arch.pi_init = jnp.zeros((64, config.arch.out_dim))
+        elif config.arch.arch_name == "PINN_Gaussian":
+            config.arch.pi_init = jnp.zeros((config.arch.features[-1], config.arch.out_dim))
+        elif hasattr(config.arch, "hidden_dim"):
+            config.arch.pi_init = jnp.zeros((config.arch.hidden_dim, config.arch.out_dim))
 
     # Restore model
     if config.arch.arch_name == "TimeDependentPINN":
