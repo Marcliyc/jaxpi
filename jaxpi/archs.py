@@ -702,7 +702,7 @@ class PINN_Gaussian(nn.Module):
     arch_name: Optional[str] = "PINN_Gaussian"
     x_min: Union[None, jnp.ndarray, float, int] = None
     x_max: Union[None, jnp.ndarray, float, int] = None
-
+    pi_init: Union[None, jnp.ndarray] = None
 
     def setup(self):
         self.activation_fn = _get_activation(self.activation)
@@ -717,7 +717,13 @@ class PINN_Gaussian(nn.Module):
             X = Dense(fs, reparam=self.reparam)(X)
             X = self.activation_fn(X)
         X = Dense(self.features[-1], reparam=self.reparam)(X)
-        return X
+        if self.pi_init is not None:
+            kernel = self.param("pi_init", constant(self.pi_init), self.pi_init.shape)
+            y = jnp.dot(x, kernel)
+
+        else:
+            y = Dense(features=self.out_dim, reparam=self.reparam)(x)
+        return X, y
 
 class SpatialFeatureGaussian(nn.Module):
     num_levels: int = 6

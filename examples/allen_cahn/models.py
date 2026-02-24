@@ -158,7 +158,7 @@ class AllenCahnTime(AllenCahn):
 
     def u_net(self, params, t, x):
         #z = jnp.stack([x, t])
-        u = self.state.apply_fn(params, x, t)
+        _, u = self.state.apply_fn(params, x, t)
         return u[0]
     
     # @partial(jit, static_argnums=(0,))
