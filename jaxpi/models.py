@@ -12,6 +12,7 @@ from flax.traverse_util import flatten_dict, unflatten_dict
 
 import optax
 
+from soap_jax import soap  # Install from https://github.com/haydn-jones/SOAP_JAX
 from jaxpi import archs
 from jaxpi.utils import flatten_pytree
 
@@ -66,14 +67,37 @@ def _create_arch(config):
 
 
 def _create_optimizer(config):
-    if config.optimizer == "Adam":
-        lr = optax.exponential_decay(
+
+    staircase = config.get("staircase", False)
+    lr = optax.exponential_decay(
             init_value=config.learning_rate,
             transition_steps=config.decay_steps,
             decay_rate=config.decay_rate,
+            staircase=staircase
         )
+    
+    if config.warmup_steps > 0:
+        warmup = optax.linear_schedule(init_value=0.0, end_value=config.learning_rate,
+                                        transition_steps=config.warmup_steps)
+
+        lr = optax.join_schedules([warmup, lr], [config.warmup_steps])
+
+    if config.optimizer == "Adam":
         tx = optax.adam(
             learning_rate=lr, b1=config.beta1, b2=config.beta2, eps=config.eps
+        )
+    elif config.optimizer == "Soap":
+        tx = soap(
+            learning_rate=lr, b1=config.beta1, b2=config.beta2, weight_decay=0.0, precondition_frequency=2
+            )
+        
+    elif config.optimizer == "Muon":
+        tx = optax.contrib.muon(
+            learning_rate=lr,
+            ns_coeffs=(2, -1.5, 0.5),
+            ns_steps=10,
+            beta=0.99,
+            adam_b1=0.99
         )
     
     elif config.optimizer == 'ClipAdamW':
