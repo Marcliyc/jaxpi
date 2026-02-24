@@ -32,18 +32,21 @@ def get_config():
 
     # Optim
     config.optim = optim = ml_collections.ConfigDict()
-    optim.grad_accum_steps = 0
     optim.optimizer = "Adam"
     optim.beta1 = 0.9
     optim.beta2 = 0.999
     optim.eps = 1e-8
     optim.learning_rate = 1e-3
     optim.decay_rate = 0.9
-    optim.decay_steps = 2000
+    optim.decay_steps = 5000
+    optim.staircase = False
+    optim.warmup_steps = 5000
+    optim.grad_accum_steps = 0
+    optim.schedule_free = False
 
     # Training
     config.training = training = ml_collections.ConfigDict()
-    training.max_steps = 200000
+    training.max_steps = 100000
     training.batch_size_per_device = 4096
 
     # Weighting

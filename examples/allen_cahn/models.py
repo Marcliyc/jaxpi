@@ -1,7 +1,9 @@
 from functools import partial
 
+import jax
 import jax.numpy as jnp
 from jax import lax, jit, grad, vmap
+from jax.tree_util import tree_map
 
 from jaxpi.models import ForwardIVP
 from jaxpi.evaluator import BaseEvaluator
@@ -39,13 +41,12 @@ class AllenCahn(ForwardIVP):
 
     def u_net(self, params, t, x):
         z = jnp.stack([t, x])
-        u = self.state.apply_fn(params, z)
+        _, u = self.state.apply_fn(params, z)
         return u[0]
 
     def r_net(self, params, t, x):
         u = self.u_net(params, t, x)
         u_t = grad(self.u_net, argnums=1)(params, t, x)
-        u_x = grad(self.u_net, argnums=2)(params, t, x)
         u_xx = grad(grad(self.u_net, argnums=2), argnums=2)(params, t, x)
         return u_t + 5 * u**3 - 5 * u - 0.0001 * u_xx
 
@@ -270,5 +271,18 @@ class AllenCanhEvaluator(BaseEvaluator):
         
         # if self.config.logging.log_grads:
         #     self.log_grads(state.params, batch)
+
+        if self.config.logging.log_nonlinearities:
+            layer_keys = [
+                key
+                for key in state.params["params"].keys()
+                if key.endswith(
+                    tuple(
+                        [f"Bottleneck_{i}" for i in range(self.config.arch.num_layers)]
+                    )
+                )
+            ]
+            for i, key in enumerate(layer_keys):
+                self.log_dict[f"alpha_{i}"] = state.params["params"][key]["alpha"]
 
         return self.log_dict

@@ -3,8 +3,12 @@ import os
 
 from absl import logging
 
+import numpy as np
+import scipy
+
 import jax
 import jax.numpy as jnp
+from jax import random, vmap
 from jax import vmap, jacrev
 from jax.tree_util import tree_map
 
@@ -15,12 +19,13 @@ import matplotlib.pyplot as plt
 
 import wandb
 
+from jaxpi.archs import Embedding
 from jaxpi.samplers import UniformSampler
 from jaxpi.logging import Logger
 from jaxpi.utils import save_checkpoint
 
 import models
-from utils import get_dataset
+from utils import get_dataset, sample_points_on_square_boundary
 
 
 def train_curriculum(config, workdir, model, step_offset, max_steps, Re):
@@ -80,9 +85,8 @@ def train_curriculum(config, workdir, model, step_offset, max_steps, Re):
             if (step + 1) % config.saving.save_every_steps == 0 or (
                 step + 1
             ) == config.training.max_steps:
-                ckpt_path = os.path.join(os.getcwd(), config.wandb.name, "ckpt", "Re{}".format(Re))
+                ckpt_path = os.path.join(os.getcwd(), config.wandb.name, "ckpt",  "Re{}".format(Re))
                 save_checkpoint(model.state, ckpt_path, keep=config.saving.num_keep_ckpts)
-
 
     # Get step offset
     step_offset = step + step_offset

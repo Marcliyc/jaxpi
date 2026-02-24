@@ -1,7 +1,7 @@
 import os
 
 import jax.numpy as jnp
-from jax import vmap
+from jax import random, vmap
 
 import scipy.io
 import ml_collections
@@ -333,6 +333,9 @@ def evaluate(config: ml_collections.ConfigDict, workdir: str, Re: int):
     # Load dataset
     u_ref, v_ref, x_star, y_star, nu = get_dataset(Re)
 
+    if config.use_pi_init:
+        config.arch.pi_init = jnp.zeros((config.arch.hidden_dim, config.arch.out_dim))
+
     # Initialize model
     model = models.NavierStokes2D(config)
 
@@ -374,7 +377,7 @@ def evaluate(config: ml_collections.ConfigDict, workdir: str, Re: int):
     plt.colorbar()
     plt.xlabel("x")
     plt.ylabel("y")
-    plt.title("Exact")
+    plt.title("Reference")
     plt.tight_layout()
 
     plt.subplot(1, 3, 2)
@@ -402,7 +405,7 @@ def evaluate(config: ml_collections.ConfigDict, workdir: str, Re: int):
     plt.colorbar()
     plt.xlabel("x")
     plt.ylabel("y")
-    plt.title("Exact")
+    plt.title("Reference")
     plt.tight_layout()
 
     plt.subplot(1, 3, 2)

@@ -124,8 +124,7 @@ its relative $L^2$ error, and links to the corresponding model [checkpoints](htt
 
 ![ns_tori](examples/ns_tori/figures/ns_animation.gif)
 
-### Vortex shedding
-![ns_cylinder](examples/ns_unsteady_cylinder/figures/ns_cylinder_u.gif)
+### Ginzburg–Landau
 
 ![ns_cylinder](examples/ns_unsteady_cylinder/figures/ns_cylinder_v.gif)
 
@@ -150,11 +149,11 @@ its relative $L^2$ error, and links to the corresponding model [checkpoints](htt
 
 ## Citation
 
-    @article{wang2023expert,
-      title={An Expert's Guide to Training Physics-informed Neural Networks},
-      author={Wang, Sifan and Sankaran, Shyam and Wang, Hanwen and Perdikaris, Paris},
-      journal={arXiv preprint arXiv:2308.08468},
-      year={2023}
+    @article{wang2024piratenets,
+      title={PirateNets: Physics-informed Deep Learning with Residual Adaptive Networks},
+      author={Wang, Sifan and Li, Bowen and Chen, Yuhan and Perdikaris, Paris},
+      journal={arXiv preprint arXiv:2402.00326},
+      year={2024}
     }
 
     @article{wang2024piratenets,

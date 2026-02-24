@@ -2,9 +2,11 @@ from functools import partial
 from typing import Any, Callable, Sequence, Tuple, Optional, Union, Dict, Literal
 from dataclasses import field
 
+
 from flax import linen as nn
 from flax.core.frozen_dict import freeze
 
+import jax
 from jax import random, jit, vmap
 from jax.nn import sigmoid
 import jax.numpy as jnp
@@ -93,6 +95,21 @@ class FourierEmbs(nn.Module):
         return y
 
 
+class Embedding(nn.Module):
+    periodicity: Union[None, Dict] = None
+    fourier_emb: Union[None, Dict] = None
+
+    @nn.compact
+    def __call__(self, x):
+        if self.periodicity:
+            x = PeriodEmbs(**self.periodicity)(x)
+
+        if self.fourier_emb:
+            x = FourierEmbs(**self.fourier_emb)(x)
+
+        return x
+
+
 class Dense(nn.Module):
     features: int
     kernel_init: Callable = glorot_normal()
@@ -158,24 +175,239 @@ class Mlp(nn.Module):
     periodicity: Union[None, Dict] = None
     fourier_emb: Union[None, Dict] = None
     reparam: Union[None, Dict] = None
+    pi_init: Union[None, jnp.ndarray] = None
 
     def setup(self):
         self.activation_fn = _get_activation(self.activation)
 
     @nn.compact
     def __call__(self, x):
-        if self.periodicity:
-            x = PeriodEmbs(**self.periodicity)(x)
-
-        if self.fourier_emb:
-            x = FourierEmbs(**self.fourier_emb)(x)
+        x = Embedding(periodicity=self.periodicity, fourier_emb=self.fourier_emb)(x)
 
         for _ in range(self.num_layers):
             x = Dense(features=self.hidden_dim, reparam=self.reparam)(x)
             x = self.activation_fn(x)
 
-        x = Dense(features=self.out_dim, reparam=self.reparam)(x)
+        if self.pi_init is not None:
+            kernel = self.param("pi_init", constant(self.pi_init), self.pi_init.shape)
+            y = jnp.dot(x, kernel)
+
+        else:
+            y = Dense(features=self.out_dim, reparam=self.reparam)(x)
+
+        return x, y
+
+
+class Bottleneck(nn.Module):
+    hidden_dim: int
+    output_dim: int
+    activation: str
+    reparam: Union[None, Dict]
+
+    def setup(self):
+        self.activation_fn = _get_activation(self.activation)
+
+    @nn.compact
+    def __call__(self, x):
+        identity = x
+
+        x = Dense(features=self.hidden_dim, reparam=self.reparam)(x)
+        x = self.activation_fn(x)
+
+        x = Dense(features=self.hidden_dim, reparam=self.reparam)(x)
+        x = self.activation_fn(x)
+
+        x = Dense(features=self.output_dim, reparam=self.reparam)(x)
+
+        x = (
+            x + identity
+        )  # Please note that the skip connection is added before the activation function, which is the same as the original ResNet
+
+        x = self.activation_fn(x)
+
         return x
+
+
+class PIBottleneck(nn.Module):
+    hidden_dim: int
+    output_dim: int
+    activation: str
+    nonlinearity: float
+    reparam: Union[None, Dict]
+
+    def setup(self):
+        self.activation_fn = _get_activation(self.activation)
+
+    @nn.compact
+    def __call__(self, x):
+        """
+        Physics-informed bottleneck block: Add the skip connection after the activation function,
+        which is different from the original ResNet, making it an identity mapping at initialization
+        """
+        identity = x
+
+        x = Dense(features=self.hidden_dim, reparam=self.reparam)(x)
+        x = self.activation_fn(x)
+
+        x = Dense(features=self.hidden_dim, reparam=self.reparam)(x)
+        x = self.activation_fn(x)
+
+        x = Dense(features=self.output_dim, reparam=self.reparam)(x)
+        x = self.activation_fn(x)
+
+        alpha = self.param("alpha", constant(self.nonlinearity), (1,))
+        # alpha = jnp.exp(-alpha)
+
+        x = alpha * x + (1 - alpha) * identity
+
+        return x
+
+
+class PIModifiedBottleneck(nn.Module):
+    hidden_dim: int
+    output_dim: int
+    activation: str
+    nonlinearity: float
+    reparam: Union[None, Dict]
+
+    def setup(self):
+        self.activation_fn = _get_activation(self.activation)
+
+    @nn.compact
+    def __call__(self, x, u, v):
+        identity = x
+
+        x = Dense(features=self.hidden_dim, reparam=self.reparam)(x)
+        x = self.activation_fn(x)
+
+        x = x * u + (1 - x) * v
+
+        x = Dense(features=self.hidden_dim, reparam=self.reparam)(x)
+        x = self.activation_fn(x)
+
+        x = x * u + (1 - x) * v
+
+        x = Dense(features=self.output_dim, reparam=self.reparam)(x)
+        x = self.activation_fn(x)
+
+        alpha = self.param("alpha", constant(self.nonlinearity), (1,))
+        x = alpha * x + (1 - alpha) * identity
+
+        return x
+
+
+class ResNet(nn.Module):
+    arch_name: Optional[str] = "ResNet"
+    num_layers: int = 2
+    hidden_dim: int = 256
+    out_dim: int = 1
+    activation: str = "tanh"
+    periodicity: Union[None, Dict] = None
+    fourier_emb: Union[None, Dict] = None
+    reparam: Union[None, Dict] = None
+    pi_init: Union[None, jnp.ndarray] = None
+
+    def setup(self):
+        self.activation_fn = _get_activation(self.activation)
+
+    @nn.compact
+    def __call__(self, x):
+        x = Embedding(periodicity=self.periodicity, fourier_emb=self.fourier_emb)(x)
+
+        for _ in range(self.num_layers):
+            x = Bottleneck(
+                hidden_dim=self.hidden_dim,
+                output_dim=x.shape[-1],
+                activation=self.activation,
+                reparam=self.reparam,
+            )(x)
+
+        y = Dense(features=self.out_dim, reparam=self.reparam)(x)
+
+        return x, y
+
+
+class PIResNet(nn.Module):
+    arch_name: Optional[str] = "PIResNet"
+    num_layers: int = 2
+    hidden_dim: int = 256
+    out_dim: int = 1
+    activation: str = "tanh"
+    nonlinearity: float = 0.0
+    periodicity: Union[None, Dict] = None
+    fourier_emb: Union[None, Dict] = None
+    reparam: Union[None, Dict] = None
+    pi_init: Union[None, jnp.ndarray] = None
+
+    def setup(self):
+        self.activation_fn = _get_activation(self.activation)
+
+    @nn.compact
+    def __call__(self, x):
+        x = Embedding(periodicity=self.periodicity, fourier_emb=self.fourier_emb)(x)
+
+        for _ in range(self.num_layers):
+            x = PIBottleneck(
+                hidden_dim=self.hidden_dim,
+                output_dim=x.shape[-1],
+                activation=self.activation,
+                nonlinearity=self.nonlinearity,
+                reparam=self.reparam,
+            )(x)
+
+        if self.pi_init is not None:
+            kernel = self.param("pi_init", constant(self.pi_init), self.pi_init.shape)
+            y = jnp.dot(x, kernel)
+
+        else:
+            y = Dense(features=self.out_dim, reparam=self.reparam)(x)
+
+        return x, y
+
+
+class PirateNet(nn.Module):
+    arch_name: Optional[str] = "PirateNet"
+    num_layers: int = 2
+    hidden_dim: int = 256
+    out_dim: int = 1
+    activation: str = "tanh"
+    nonlinearity: float = 0.0
+    periodicity: Union[None, Dict] = None
+    fourier_emb: Union[None, Dict] = None
+    reparam: Union[None, Dict] = None
+    pi_init: Union[None, jnp.ndarray] = None
+
+    def setup(self):
+        self.activation_fn = _get_activation(self.activation)
+
+    @nn.compact
+    def __call__(self, x):
+        embs = Embedding(periodicity=self.periodicity, fourier_emb=self.fourier_emb)(x)
+        x = embs
+
+        u = Dense(features=self.hidden_dim, reparam=self.reparam)(x)
+        u = self.activation_fn(u)
+
+        v = Dense(features=self.hidden_dim, reparam=self.reparam)(x)
+        v = self.activation_fn(v)
+
+        for _ in range(self.num_layers):
+            x = PIModifiedBottleneck(
+                hidden_dim=self.hidden_dim,
+                output_dim=x.shape[-1],
+                activation=self.activation,
+                nonlinearity=self.nonlinearity,
+                reparam=self.reparam,
+            )(x, u, v)
+
+        if self.pi_init is not None:
+            kernel = self.param("pi_init", constant(self.pi_init), self.pi_init.shape)
+            y = jnp.dot(x, kernel)
+
+        else:
+            y = Dense(features=self.out_dim, reparam=self.reparam)(x)
+
+        return x, y
 
 
 class ModifiedMlp(nn.Module):
@@ -189,6 +421,7 @@ class ModifiedMlp(nn.Module):
     pyramid: Union[None, Dict] = None
     gaussian: Union[None, Dict] = None
     reparam: Union[None, Dict] = None
+    pi_init: Union[None, jnp.ndarray] = None
 
     def setup(self):
         self.activation_fn = _get_activation(self.activation)
@@ -219,9 +452,19 @@ class ModifiedMlp(nn.Module):
             x = self.activation_fn(x)
             x = x * u + (1 - x) * v
 
-        x = Dense(features=self.out_dim, reparam=self.reparam)(x)
-        return x
+        if self.pi_init is not None:
+            kernel = self.param("pi_init", constant(self.pi_init), self.pi_init.shape)
+            y = jnp.dot(x, kernel)
 
+        else:
+            y = Dense(features=self.out_dim, reparam=self.reparam)(x)
+
+        return x, y
+
+
+#################################################################################################
+#################################### neural operators ###########################################
+#################################################################################################
 
 class MlpBlock(nn.Module):
     num_layers: int
@@ -313,17 +556,6 @@ def interpolate_grid_nd(grid, x, res=None,
         dim_weights.append(w_d)
         dim_coords.append(c_d)
 
-    #print(grid.shape)
-    #print(type(grid), getattr(grid, "dtype", None))
-    #print(type(dim_coords),getattr(dim_coords, "dtype", None),dim_coords)
-    # grid_patch = grid[jnp.ix_(*dim_coords)]
-
-    # idx_grids = jnp.meshgrid(*dim_coords, indexing="ij")  # list of ndim arrays, shape (4,4,...)
-    # grid_patch = grid[tuple(idx_grids)]                   # shape (4,4,...,feat_dim)
-    # if ndim == 1:
-    #     grid_patch = grid[dim_coords[0]]  # shape (4, feat_dim) if grid is (N, feat_dim)
-    # else:
-    #     grid_patch = grid[jnp.ix_(*dim_coords)]
     grid_patch = grid
     for axis, coords in enumerate(dim_coords):
         grid_patch = jnp.take(grid_patch, coords, axis=axis)
@@ -334,81 +566,6 @@ def interpolate_grid_nd(grid, x, res=None,
         combined_weights = combined_weights * dim_weights[i]
     combined_weights = jnp.expand_dims(combined_weights, axis=-1)
     return jnp.sum(grid_patch * combined_weights, axis=tuple(range(ndim)))
-
-# def interpolate_grid_nd(grid, x, 
-#                         attn_mode = (0,0), # default 'clip' for all dims
-#                         x_min=None, x_max=None, 
-#                         weight_fn=cubic_bspline_weight, offsets = jnp.arange(-1, 3)):
-#     ndim=len(attn_mode)
-#     if x_min is None:
-#         x_min = jnp.zeros((ndim,))
-#     if x_max is None:
-#         x_max = jnp.ones((ndim,))
-#     x_min = jnp.asarray(x_min)
-#     x_max = jnp.asarray(x_max)
-#     domain_size = x_max - x_min
-#     x_norm = (x - x_min) / jnp.where(domain_size == 0, 1.0, domain_size)
-
-#     N = jnp.array([min(grid.shape[:-1])]*ndim)  # Assuming cubic grid for simplicity
-#     gx = x_norm * (N)
-#     attn_mode_arr = jnp.array(attn_mode)
-#     add = jnp.where(attn_mode_arr == 0, 1, 0)  # clip:3, repeat:0
-#     base_idx = jnp.floor(gx)+add
-#     base_idx = base_idx.astype(jnp.int32)
-
-#     dim_weights = []
-#     dim_coords = []
-#     for d,mode in enumerate(attn_mode):
-#         idx_d = base_idx[d] + offsets # Shape: (Kernel size,)
-#         dist_d = gx[d] - idx_d
-#         w_d = weight_fn(dist_d)       # Shape: (K,)
-#         if mode == 0:  # clip
-#             c_d = jnp.clip(idx_d, 0, N[d] - 1)
-#         else:          # repeat
-#             c_d = jnp.mod(idx_d, N[d])
-#         dim_weights.append(w_d)
-#         dim_coords.append(c_d)
-        
-#     grid_patch = grid[jnp.ix_(*dim_coords)]
-#     combined_weights = dim_weights[0]
-#     for i in range(1, ndim):
-#         combined_weights = jnp.expand_dims(combined_weights, axis=-1)
-#         combined_weights = combined_weights * dim_weights[i]
-#     combined_weights = jnp.expand_dims(combined_weights, axis=-1)
-#     return jnp.sum(grid_patch * combined_weights, axis=tuple(range(ndim)))
-
-# def interpolate_grid_nd(grid, x, ndim=2, method: Literal['linear', 'cubic'] = 'cubic'):
-#     #ndim = x.shape[0]
-#     spatial_shape = jnp.array(grid.shape[:-1])
-#     gx = x * (spatial_shape - 1)
-#     base_idx = jnp.floor(gx).astype(jnp.int32)
-
-#     if method == 'linear':
-#         offsets = jnp.arange(0, 2) 
-#         weight_fn = linear_weight
-#     else:
-#         offsets = jnp.arange(-1, 3)
-#         weight_fn = cubic_bspline_weight
-
-#     dim_weights = []
-#     dim_coords = []
-    
-#     for d in range(ndim):
-#         idx_d = base_idx[d] + offsets # (Kernel size,)
-#         dist_d = gx[d] - idx_d
-#         w_d = weight_fn(dist_d) # (K,)
-#         c_d = jnp.clip(idx_d, 0, spatial_shape[d] - 1)
-#         dim_weights.append(w_d)
-#         dim_coords.append(c_d)
-
-#     grid_patch = grid[jnp.ix_(*dim_coords)]
-#     combined_weights = dim_weights[0]
-#     for i in range(1, ndim):
-#         combined_weights = jnp.expand_dims(combined_weights, axis=-1)
-#         combined_weights = combined_weights * dim_weights[i]
-#     combined_weights = jnp.expand_dims(combined_weights, axis=-1)
-#     return jnp.sum(grid_patch * combined_weights, axis=tuple(range(ndim)))
-
 
 class SpatialFeaturePyramid(nn.Module):
     num_levels: int = 6

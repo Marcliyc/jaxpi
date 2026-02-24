@@ -1,3 +1,11 @@
 *.DS_Store
 build/
 jaxpi.egg-info/
+*.pyc
+*.log
+*.png
+
+examples/allen_cahn/grid*
+examples/allen_cahn/gaussian*
+*wandb*
+examples/allen_cahn/train.sh

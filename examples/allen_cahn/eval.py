@@ -19,6 +19,9 @@ def evaluate(config: ml_collections.ConfigDict, workdir: str):
     u_ref, t_star, x_star = get_dataset()
     u0 = u_ref[0, :]
 
+    if config.use_pi_init:
+        config.arch.pi_init = jnp.zeros((config.arch.hidden_dim, config.arch.out_dim))
+
     # Restore model
     if config.arch.arch_name == "TimeDependentPINN":
         model = models.AllenCahnTime(config, u0, t_star, x_star)
@@ -48,7 +51,7 @@ def evaluate(config: ml_collections.ConfigDict, workdir: str):
     plt.colorbar()
     plt.xlabel("t")
     plt.ylabel("x")
-    plt.title("Exact")
+    plt.title("Reference")
     plt.tight_layout()
 
     plt.subplot(1, 3, 2)

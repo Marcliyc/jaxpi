@@ -16,6 +16,9 @@ from soap_jax import soap  # Install from https://github.com/haydn-jones/SOAP_JA
 from jaxpi import archs
 from jaxpi.utils import flatten_pytree
 
+from soap_jax import soap  # Install from https://github.com/haydn-jones/SOAP_JAX
+# from psgd_jax.kron import kron
+
 
 class TrainState(train_state.TrainState):
     weights: Dict
@@ -48,8 +51,17 @@ def _create_arch(config):
     if config.arch_name == "Mlp":
         arch = archs.Mlp(**config)
 
+    elif config.arch_name == "ResNet":
+        arch = archs.ResNet(**config)
+
     elif config.arch_name == "ModifiedMlp":
         arch = archs.ModifiedMlp(**config)
+
+    elif config.arch_name == "PIResNet":
+        arch = archs.PIResNet(**config)
+
+    elif config.arch_name == "PirateNet":
+        arch = archs.PirateNet(**config)
 
     elif config.arch_name == "DeepONet":
         arch = archs.DeepONet(**config)
@@ -101,18 +113,14 @@ def _create_optimizer(config):
         )
     
     elif config.optimizer == 'ClipAdamW':
-        lr = optax.warmup_cosine_decay_schedule(
-            init_value=config.learning_rate * 0.01,
-            peak_value=config.learning_rate,
-            warmup_steps=config.warmup_steps,
-            decay_steps=config.decay_steps,
-            end_value=config.learning_rate * 0.01,
-        )
-        # lr = optax.exponential_decay(
-        #     init_value=config.learning_rate,
-        #     transition_steps=config.decay_steps,
-        #     decay_rate=config.decay_rate,
+        # lr = optax.warmup_cosine_decay_schedule(
+        #     init_value=config.learning_rate * 0.01,
+        #     peak_value=config.learning_rate,
+        #     warmup_steps=config.warmup_steps,
+        #     decay_steps=config.decay_steps,
+        #     end_value=config.learning_rate * 0.01,
         # )
+
         def make_mask_gaussian(params):
             flat = flatten_dict(params, sep="/")
             mask_flat = {}
@@ -135,27 +143,45 @@ def _create_optimizer(config):
         )
     
     elif config.optimizer == 'ClipAdam':
-        lr = optax.exponential_decay(
-            init_value=config.learning_rate,
-            transition_steps=config.decay_steps,
-            decay_rate=config.decay_rate,
-        )
         tx = optax.chain(
             optax.clip_by_global_norm(config.grad_clip),
             optax.adam(learning_rate=lr, b1=config.beta1, b2=config.beta2, eps=config.eps),
         )
 
-    else:
-        raise NotImplementedError(f"Optimizer {config.optimizer} not supported yet!")
+    # elif config.optimizer == "Kron":
+    #         tx = kron(
+    #             learning_rate=lr, b1=config.beta1
+    #             )
+
+    elif config.optimizer == "Lamb":
+        tx = optax.lamb(
+            learning_rate=lr, b1=config.beta1, b2=config.beta2, eps=config.eps
+        )
+
+    elif config.optimizer == "Adagrad":
+        tx = optax.adagrad(
+            learning_rate=lr, eps=config.eps
+        )
+
+    elif config.optimizer == "RMSProp":
+        tx = optax.rmsprop(
+            learning_rate=lr
+        )
+
+    if config.schedule_free:
+        tx = optax.chain(
+            optax.clip_by_global_norm(1.0),
+            optax.contrib.schedule_free(tx, lr, b1=config.beta1)
+            )
 
     # Gradient accumulation
     if config.grad_accum_steps > 1:
         tx = optax.MultiSteps(tx, every_k_schedule=config.grad_accum_steps)
 
-    return tx
+    return lr, tx
 
 
-def _create_train_state(config):
+def _create_train_state(config, params=None, weights=None):
     # Initialize network
     arch = _create_arch(config.arch)
     x = jnp.ones(config.input_dim)
@@ -167,16 +193,19 @@ def _create_train_state(config):
         params = arch.init(random.PRNGKey(config.seed), x, t)
 
     # Initialize optax optimizer
-    tx = _create_optimizer(config.optim)
+    lr, tx = _create_optimizer(config.optim)
 
-    # Convert config dict to dict
-    init_weights = dict(config.weighting.init_weights)
+    if params is None:
+        params = arch.init(random.PRNGKey(config.seed), x)
+
+    if weights is None:
+        weights = dict(config.weighting.init_weights)
 
     state = TrainState.create(
         apply_fn=arch.apply,
         params=params,
         tx=tx,
-        weights=init_weights,
+        weights=weights,
         momentum=config.weighting.momentum,
     )
 
@@ -227,7 +256,9 @@ class PINN:
             # Compute the mean of grad norms over all losses
             mean_grad_norm = jnp.mean(jnp.stack(tree_leaves(grad_norm_dict)))
             # Grad Norm Weighting
-            w = tree_map(lambda x: (mean_grad_norm / x), grad_norm_dict)
+            w = tree_map(
+                lambda x: (mean_grad_norm / (x + 1e-5 * mean_grad_norm)), grad_norm_dict
+            )
 
         elif self.config.weighting.scheme == "ntk":
             # Compute the diagonal of the NTK of each loss
@@ -239,7 +270,7 @@ class PINN:
             # Compute the average over all ntk means
             mean_ntk = jnp.mean(jnp.stack(tree_leaves(mean_ntk_dict)))
             # NTK Weighting
-            w = tree_map(lambda x: (mean_ntk / x), mean_ntk_dict)
+            w = tree_map(lambda x: (mean_ntk / (x + 1e-5 * mean_ntk)), mean_ntk_dict)
 
         return w
 

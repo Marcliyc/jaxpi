@@ -3,12 +3,16 @@ import time
 
 import jax
 import jax.numpy as jnp
+from jax import random, vmap
 from jax.tree_util import tree_map
 
+import scipy.io
+
 import ml_collections
-from absl import logging
 import wandb
 
+
+from jaxpi.archs import PeriodEmbs, Embedding
 from jaxpi.samplers import UniformSampler
 from jaxpi.logging import Logger
 from jaxpi.utils import save_checkpoint
@@ -40,6 +44,47 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
 
     # Define residual sampler
     res_sampler = iter(UniformSampler(dom, config.training.batch_size_per_device))
+
+    if config.use_pi_init:
+        logger.info("Use physics-informed initialization...")
+
+        model = models.AllenCahn(config, u0, t_star, x_star)
+        state = jax.device_get(tree_map(lambda x: x[0], model.state))
+        params = state.params
+
+        # Initialization data source
+        if config.pi_init_type == "linear_pde":
+            # load data
+            data = scipy.io.loadmat("data/allen_cahn_linear.mat")
+            # downsample the grid and data
+            u = data["usol"][::10]
+            t = data["t"].flatten()[::10]
+            x = data["x"].flatten()
+
+            tt, xx = jnp.meshgrid(t, x, indexing="ij")
+            inputs = jnp.hstack([tt.flatten()[:, None], xx.flatten()[:, None]])
+
+        elif config.pi_init_type == "initial_condition":
+            t = t_star[::10]
+            x = x_star
+            u = u0
+
+            tt, xx = jnp.meshgrid(t, x, indexing="ij")
+            inputs = jnp.hstack([tt.flatten()[:, None], xx.flatten()[:, None]])
+            u = jnp.tile(u.flatten(), (t.shape[0], 1))
+
+        feat_matrix, _ = vmap(state.apply_fn, (None, 0))(params, inputs)
+
+        coeffs, residuals, rank, s = jnp.linalg.lstsq(
+            feat_matrix, u.flatten(), rcond=None
+        )
+        print("least square residuals: ", residuals)
+
+        config.arch.pi_init = coeffs.reshape(
+            -1, 1
+        )  # Be careful, this overwrites the config file!
+
+        del model, state, params
 
     # Initialize model
     if 'Time' in config.arch.arch_name:

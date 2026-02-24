@@ -28,8 +28,9 @@ class KS(ForwardIVP):
 
     def u_net(self, params, t, x):
         t = t / self.t_star[-1]  # scale t to [0, 1]
+        # x = x / self.x_star[-1] # scale x to [0, 1]
         z = jnp.stack([t, x])
-        u = self.state.apply_fn(params, z)
+        _, u = self.state.apply_fn(params, z)
         return u[0]
 
     def r_net(self, params, t, x):

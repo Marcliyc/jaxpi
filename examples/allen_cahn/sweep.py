@@ -37,19 +37,9 @@ def main(argv):
     }
 
     parameters_dict = {
-        "arch_name": {"values": ["Mlp", "ModifiedMlp"]},
-        "hidden_dim": {"values": [256, 512]},
-        "num_layers": {"values": [3, 4, 5]},
-        "activation": {"values": ["tanh", "gelu"]},
-        "arch_reparam": {
-            "values": [
-                {"type": "weight_fact", "mean": 0.5, "stddev": 0.1},
-                {"type": "weight_fact", "mean": 1.0, "stddev": 0.1},
-            ]
-        },
-        "decay_steps": {"values": [2000, 5000]},
-        "scheme": {"values": ["grad_norm", "ntk"]},
-        "causal_tol": {"values": [1.0, 10.0]},
+        "arch_name": {"values": ["Mlp", "ResNet", "PirateNet"]},
+        "num_layers": {"values": [1, 2, 3, 4, 5, 6]},
+        "seed": {"values": [2, 3, 5, 7, 11]},
     }
 
     sweep_config["parameters"] = parameters_dict
@@ -63,15 +53,17 @@ def main(argv):
 
         # Update config with sweep parameters
         config.arch.arch_name = sweep_config.arch_name
-        config.arch.hidden_dim = sweep_config.hidden_dim
-        config.arch.num_layers = sweep_config.num_layers
-        config.arch.activation = sweep_config.activation
-        config.arch.reparam = sweep_config.arch_reparam
 
-        config.optim.decay_steps = sweep_config.decay_steps
+        # Since each bottleneck block contains 3 layers
+        if config.arch.arch_name == "Mlp":
+            config.arch.num_layers = sweep_config.num_layers * 3
+        else:
+            config.arch.num_layers = sweep_config.num_layers
 
-        config.weighting.scheme = sweep_config.scheme
-        config.weighting.causal_tol = sweep_config.causal_tol
+        if config.arch.arch_name == "PirateNet":
+            config.use_pi_init = True
+
+        config.seed = sweep_config.seed
 
         train.train_and_evaluate(config, workdir)
 

@@ -12,21 +12,25 @@ def get_config():
     # Weights & Biases
     config.wandb = wandb = ml_collections.ConfigDict()
     wandb.project = "PINN-AllenCahn"
-    wandb.name = None
+    wandb.name = "sweep"
     wandb.tag = None
+
+    # Physics-informed initialization
+    config.use_pi_init = False
 
     # Arch
     config.arch = arch = ml_collections.ConfigDict()
     arch.arch_name = "Mlp"
-    arch.num_layers = 4
+    arch.num_layers = 3
     arch.hidden_dim = 256
     arch.out_dim = 1
     arch.activation = "tanh"
-    arch.periodicity = ml_collections.ConfigDict({"period": (jnp.pi,), "axis": (1,)})
-    arch.fourier_emb = ml_collections.ConfigDict({"embed_scale": 1, "embed_dim": 256})
-    arch.reparam = ml_collections.ConfigDict(
-        {"type": "weight_fact", "mean": 0.5, "stddev": 0.1}
+    arch.periodicity = ml_collections.ConfigDict(
+        {"period": (jnp.pi,), "axis": (1,), "trainable": (False,)}
     )
+    arch.fourier_emb = ml_collections.ConfigDict({"embed_scale": 1.0, "embed_dim": 256})
+    arch.reparam = None
+    arch.pi_init = None
 
     # Optim
     config.optim = optim = ml_collections.ConfigDict()
@@ -37,12 +41,14 @@ def get_config():
     optim.learning_rate = 1e-3
     optim.decay_rate = 0.9
     optim.decay_steps = 2000
+    optim.staircase = False
+    optim.warmup_steps = 5000
     optim.grad_accum_steps = 0
 
     # Training
     config.training = training = ml_collections.ConfigDict()
-    training.max_steps = 300000
-    training.batch_size_per_device = 4096
+    training.max_steps = 100000
+    training.batch_size_per_device = 1024
 
     # Weighting
     config.weighting = weighting = ml_collections.ConfigDict()
@@ -53,7 +59,7 @@ def get_config():
 
     weighting.use_causal = True
     weighting.causal_tol = 1.0
-    weighting.num_chunks = 32
+    weighting.num_chunks = 16
 
     # Logging
     config.logging = logging = ml_collections.ConfigDict()
@@ -61,6 +67,7 @@ def get_config():
     logging.log_errors = True
     logging.log_losses = True
     logging.log_weights = True
+    logging.log_nonlinearities = False
     logging.log_preds = False
     logging.log_grads = False
     logging.log_ntk = False

@@ -21,13 +21,15 @@ class NavierStokes2D(ForwardBVP):
         # Sample boundary points uniformly
         num_pts = 256
         self.x_bc1 = sample_points_on_square_boundary(
-            num_pts, eps=0.01
+            num_pts, eps=0.0
         )  # avoid singularity a right corner for u velocity
-        self.x_bc2 = sample_points_on_square_boundary(num_pts, eps=0.01)
+        self.x_bc2 = sample_points_on_square_boundary(num_pts, eps=0.0)
 
         # Boundary conditions
         self.v_bc = jnp.zeros((num_pts * 4,))
-        self.u_bc = self.v_bc.at[:num_pts].set(1.0)
+
+        lid_bc_fn = lambda x: 1 - jnp.cosh(50 * (x - 0.5)) / jnp.cosh(50 * 0.5)
+        self.u_bc = self.v_bc.at[:num_pts].set(lid_bc_fn(self.x_bc1[:num_pts, 0]))
 
         # Predictions over a grid
         self.u_pred_fn = vmap(self.u_net, (None, 0, 0))
@@ -37,7 +39,7 @@ class NavierStokes2D(ForwardBVP):
 
     def neural_net(self, params, x, y):
         z = jnp.stack([x, y])
-        outputs = self.state.apply_fn(params, z)
+        _, outputs = self.state.apply_fn(params, z)
         u = outputs[0]
         v = outputs[1]
         p = outputs[2]
@@ -58,7 +60,9 @@ class NavierStokes2D(ForwardBVP):
     def r_net(self, params, nu, x, y):
         u, v, p = self.neural_net(params, x, y)
 
-        (u_x, u_y), (v_x, v_y), (p_x, p_y) = jacrev(self.neural_net, argnums=(1, 2))(params, x, y)
+        (u_x, u_y), (v_x, v_y), (p_x, p_y) = jacrev(self.neural_net, argnums=(1, 2))(
+            params, x, y
+        )
 
         u_hessian = hessian(self.u_net, argnums=(1, 2))(params, x, y)
         v_hessian = hessian(self.v_net, argnums=(1, 2))(params, x, y)
@@ -203,5 +207,18 @@ class NavierStokesEvaluator(BaseEvaluator):
 
         if self.config.logging.log_preds:
             self.log_preds(state.params, x_star, y_star)
+
+        if self.config.logging.log_nonlinearities:
+            layer_keys = [
+                key
+                for key in state.params["params"].keys()
+                if key.endswith(
+                    tuple(
+                        [f"Bottleneck_{i}" for i in range(self.config.arch.num_layers)]
+                    )
+                )
+            ]
+            for i, key in enumerate(layer_keys):
+                self.log_dict[f"alpha_{i}"] = state.params["params"][key]["alpha"]
 
         return self.log_dict

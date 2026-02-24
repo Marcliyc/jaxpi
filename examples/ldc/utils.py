@@ -10,7 +10,7 @@ def get_dataset(Re):
     v_ref = data["v"]
     x_star = data["x"].flatten()
     y_star = data["y"].flatten()
-    nu = data["nu"]
+    nu = data["nu"].flatten()
 
     return u_ref, v_ref, x_star, y_star, nu
 

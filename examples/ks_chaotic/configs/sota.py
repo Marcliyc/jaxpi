@@ -18,6 +18,9 @@ def get_config():
     # Set the fractional size of the full temporal domain
     config.time_fraction = 1.0
 
+    # Physics-informed initialization
+    config.use_pi_init = False
+
     # Arch
     config.arch = arch = ml_collections.ConfigDict()
     arch.arch_name = "ModifiedMlp"
@@ -42,7 +45,11 @@ def get_config():
     optim.learning_rate = 1e-3
     optim.decay_rate = 0.9
     optim.decay_steps = 2000
+    optim.staircase = False
+    optim.warmup_steps = 5000
     optim.grad_accum_steps = 0
+    optim.schedule_free = False
+
 
     config.training = training = ml_collections.ConfigDict()
     training.max_steps = 200000
