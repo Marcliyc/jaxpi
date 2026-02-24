@@ -45,7 +45,7 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
     # Define residual sampler
     res_sampler = iter(UniformSampler(dom, config.training.batch_size_per_device))
 
-    if config.use_pi_init:
+    if config.get("use_pi_init", False):
         logger.info("Use physics-informed initialization...")
 
         model = models.AllenCahn(config, u0, t_star, x_star)
@@ -73,7 +73,13 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
             inputs = jnp.hstack([tt.flatten()[:, None], xx.flatten()[:, None]])
             u = jnp.tile(u.flatten(), (t.shape[0], 1))
 
-        feat_matrix, _ = vmap(state.apply_fn, (None, 0))(params, inputs)
+        if config.arch.arch_name == "TimeDependentPINN":
+            feat_matrix, _ = vmap(
+                lambda z: state.apply_fn(params, z[1:], z[0]),
+                (0,),
+            )(inputs)
+        else:
+            feat_matrix, _ = vmap(state.apply_fn, (None, 0))(params, inputs)
 
         coeffs, residuals, rank, s = jnp.linalg.lstsq(
             feat_matrix, u.flatten(), rcond=None

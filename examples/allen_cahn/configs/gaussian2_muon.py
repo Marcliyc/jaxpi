@@ -12,6 +12,9 @@ def get_config():
     wandb.name = "gaussian2_muon"
     wandb.tag = None
 
+    # Physics-informed initialization
+    config.use_pi_init = False
+
     # Arch: Time-Dependent Multi-Res Grid
     config.arch = arch = ml_collections.ConfigDict()
     arch.arch_name = "PINN_Gaussian"
@@ -24,6 +27,7 @@ def get_config():
     arch.features = [16]
     arch.out_dim = 1
     arch.activation = "tanh"
+    arch.pi_init = None
     # arch.reparam = ml_collections.ConfigDict(
     #     {"type": "weight_fact", "mean": 1.0, "stddev": 0.1}
     # )

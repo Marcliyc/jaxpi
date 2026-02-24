@@ -12,6 +12,9 @@ def get_config():
     wandb.name = "grid11_64_4_24_256_8"
     wandb.tag = None
 
+    # Physics-informed initialization
+    config.use_pi_init = False
+
     # Arch: Time-Dependent Multi-Res Grid
     config.arch = arch = ml_collections.ConfigDict()
     arch.arch_name = "TimeDependentPINN"
@@ -30,6 +33,7 @@ def get_config():
     arch.hidden_mult = 8            # Kept the second value from your file
     arch.out_dim = 1
     arch.activation = "tanh"
+    arch.pi_init = None
     arch.reparam = ml_collections.ConfigDict(
         {"type": "weight_fact", "mean": 1.0, "stddev": 0.1}
     )
