@@ -512,14 +512,46 @@ def cubic_bspline_weight(t):
 def linear_weight(t):
     return jnp.maximum(0.0, 1.0 - jnp.abs(t))
 
+
+def quintic_bspline_weight(t):
+    t = jnp.abs(t)
+    return jnp.where(
+        t < 1.0,
+        (66.0 - 60.0 * t**2 + 30.0 * t**4 - 10.0 * t**5) / 120.0,
+        jnp.where(
+            t < 2.0,
+            (51.0 + 75.0 * t - 210.0 * t**2 + 150.0 * t**3 - 45.0 * t**4 + 5.0 * t**5) / 120.0,
+            jnp.where(
+                t < 3.0,
+                (3.0 - t) ** 5 / 120.0,
+                0.0,
+            ),
+        ),
+    )
+
+
+def _get_interp_spec(interp_method: str):
+    if interp_method == "linear":
+        return linear_weight, jnp.arange(0, 2), 2
+    if interp_method == "cubic":
+        return cubic_bspline_weight, jnp.arange(-1, 3), 3
+    if interp_method == "quintic":
+        return quintic_bspline_weight, jnp.arange(-2, 4), 4
+
+    raise NotImplementedError(f"Interpolation method {interp_method} not supported!")
+
 # In jaxpi/archs.py
 
 def interpolate_grid_nd(grid, x, res=None,
-                        attn_mode=(0,0), # Ensure this is a tuple as per previous fix
-                        x_min=None, x_max=None, 
-                        weight_fn=cubic_bspline_weight, offsets=jnp.arange(-1, 3)):
+                        attn_mode=(0,0),
+                        x_min=None, x_max=None,
+                        weight_fn=cubic_bspline_weight, offsets=None):
     ndim = len(attn_mode)
-    
+    if offsets is None:
+        offsets = jnp.arange(-1, 3, dtype=jnp.int32)
+    else:
+        offsets = jnp.asarray(offsets, dtype=jnp.int32)
+
     if x_min is None:
         x_min = jnp.zeros((ndim,))
     if x_max is None:
@@ -531,32 +563,28 @@ def interpolate_grid_nd(grid, x, res=None,
 
     if res is None:
         res = min(grid.shape[:-1])
-    N = jnp.array([res]*ndim)
-    #print(N)
-    gx = x_norm * (N)
-    
-    # Convert tuple to array for the 'add' calculation
-    attn_mode_arr = jnp.array(attn_mode)
-    add = jnp.where(attn_mode_arr == 0, 1, 0)
+    N = jnp.full((ndim,), res, dtype=jnp.int32)
+    gx = x_norm * N.astype(x_norm.dtype)
+
+    attn_mode_arr = jnp.asarray(attn_mode, dtype=jnp.int32)
+    add = jnp.where(attn_mode_arr == 0, 1, 0).astype(gx.dtype)
     gx += add
-    
-    base_idx = jnp.floor(gx)
-    base_idx = base_idx.astype(jnp.int32)
-    #print(base_idx)
-    
+
+    base_idx = jnp.floor(gx).astype(jnp.int32)
+
     dim_weights = []
     dim_coords = []
-    
+
     for d, mode in enumerate(attn_mode):
-        idx_d = base_idx[d] + offsets 
-        dist_d = gx[d] - idx_d
+        idx_d = (base_idx[d] + offsets).astype(jnp.int32)
+        dist_d = gx[d] - idx_d.astype(gx.dtype)
         w_d = weight_fn(dist_d)
-        
-        if mode == 0:  
+
+        if mode == 0:
             c_d = jnp.clip(idx_d, 0, N[d] - 1)
-        else:          
-            c_d = jnp.mod(idx_d, N[d])
-            
+        else:
+            c_d = jnp.mod(idx_d, N[d]).astype(jnp.int32)
+
         dim_weights.append(w_d)
         dim_coords.append(c_d)
 
@@ -577,20 +605,21 @@ class SpatialFeaturePyramid(nn.Module):
     feature_dim: int = 48
     #ndim: int = 2                       # New: Support 1D, 2D, 3D
     attn_mode: tuple = (0,0) #0:'clip',1:'repeat', default ['clip','clip'] for 2D
-    interp_method: str = 'cubic'        # New: 'linear' or 'cubic', not used currently
+    interp_method: str = 'cubic'        # Supports 'linear', 'cubic', and 'quintic'
     x_min: Union[None, jnp.ndarray, float, int] = None
     x_max: Union[None, jnp.ndarray, float, int] = None
 
     @nn.compact
     def __call__(self, x: jnp.ndarray) -> list:
         features = []
+        weight_fn, offsets, clip_padding = _get_interp_spec(self.interp_method)
         # padding = 3
         for level in range(self.num_levels):
             res = self.base_resolution * (2 ** level)
             grid_shape = ()
             for mode in self.attn_mode:
                 if mode == 0: #clip
-                    padding = 3
+                    padding = clip_padding
                 elif mode == 1: #repeat for periodic bc
                     padding = 0
                 else:
@@ -602,7 +631,7 @@ class SpatialFeaturePyramid(nn.Module):
                 nn.initializers.normal(0.01),
                 grid_shape
             )
-            features.append(interpolate_grid_nd(grid, x, res=res, attn_mode=self.attn_mode, x_min=self.x_min, x_max=self.x_max))
+            features.append(interpolate_grid_nd(grid, x, res=res, attn_mode=self.attn_mode, x_min=self.x_min, x_max=self.x_max, weight_fn=weight_fn, offsets=offsets))
             #features.append(interpolate_grid_2d(grid, x, x_min=self.x_min, x_max=self.x_max))
         return features[::-1]
     

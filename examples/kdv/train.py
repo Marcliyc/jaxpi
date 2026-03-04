@@ -52,7 +52,10 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
     if config.use_pi_init:
         logger.info("Use physics-informed initialization...")
 
-        model = models.KDV(config, u0, t_star, x_star)
+        if "Time" in config.arch.arch_name:
+            model = models.KDVTime(config, u0, t_star, x_star)
+        else:
+            model = models.KDV(config, u0, t_star, x_star)
         state = jax.device_get(tree_map(lambda x: x[0], model.state))
         params = state.params
 
@@ -77,7 +80,13 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
             inputs = jnp.hstack([tt.flatten()[:, None], xx.flatten()[:, None]])
             u = jnp.tile(u.flatten(), (t.shape[0], 1))
 
-        feat_matrix, _ = vmap(state.apply_fn, (None, 0))(params, inputs)
+        if config.arch.arch_name == "TimeDependentPINN":
+            feat_matrix, _ = vmap(
+                lambda z: state.apply_fn(params, z[1:], z[0]),
+                (0,),
+            )(inputs)
+        else:
+            feat_matrix, _ = vmap(state.apply_fn, (None, 0))(params, inputs)
 
         coeffs, residuals, rank, s = jnp.linalg.lstsq(
             feat_matrix, u.flatten(), rcond=None
@@ -89,10 +98,15 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
         del model, state, params
 
     # Initialize model
-    model = models.KDV(config, u0, t_star, x_star)
+    if "Time" in config.arch.arch_name:
+        model = models.KDVTime(config, u0, t_star, x_star)
+    else:
+        model = models.KDV(config, u0, t_star, x_star)
 
     # Initialize evaluator
     evaluator = models.KDVEvaluator(config, model)
+
+    grad_layer_names = model.get_grad_layer_names()
 
     logger.info("Waiting for JIT...")
     for step in range(config.training.max_steps):
@@ -100,7 +114,10 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
 
         batch = next(res_sampler)
 
-        model.state = model.step(model.state, batch)
+        if config.logging.log_grads and step % config.logging.log_every_steps == 0:
+            model.state, grad_norms = model.step_with_grad_stats(model.state, batch)
+        else:
+            model.state = model.step(model.state, batch)
 
         if config.weighting.scheme in ["grad_norm", "ntk"]:
             # Avoid computing gradients for the first few steps
@@ -114,6 +131,14 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
                 state = jax.device_get(tree_map(lambda x: x[0], model.state))
                 batch = jax.device_get(tree_map(lambda x: x[0], batch))
                 log_dict = evaluator(state, batch, u_ref)
+
+                if config.logging.log_grads:
+                    grad_norms_host = jax.device_get(grad_norms)[0]
+                    for name, norm in zip(grad_layer_names, grad_norms_host):
+                        log_dict[f"{name}_grad_norm"] = float(norm)
+                    log_dict["max_grad_layer"] = grad_layer_names[jnp.argmax(grad_norms_host)]
+                    log_dict["max_grad_norm"] = float(jnp.max(grad_norms_host))
+
                 wandb.log(log_dict, step)
 
                 end_time = time.time()
