@@ -3,6 +3,7 @@ import jax.numpy as jnp
 
 
 def get_config():
+    """Get the base hyperparameter configuration for TimeDependentPINN grid sweeps."""
     config = ml_collections.ConfigDict()
 
     config.mode = "train"
@@ -10,14 +11,14 @@ def get_config():
     # Weights & Biases
     config.wandb = wandb = ml_collections.ConfigDict()
     wandb.project = "PINN-KDV"
-    wandb.name = "grid_128_3_24_256_4_pi_init"
+    wandb.name = "grid_sweep"
     wandb.tag = None
 
     # Physics-informed initialization
     config.use_pi_init = True
     config.pi_init_type = "initial_condition"
 
-    # Arch: Time-Dependent Multi-Res Grid
+    # Arch
     config.arch = arch = ml_collections.ConfigDict()
     arch.arch_name = "TimeDependentPINN"
 
@@ -56,37 +57,40 @@ def get_config():
 
     # Training
     config.training = training = ml_collections.ConfigDict()
-    training.max_steps = 200000
-    training.batch_size_per_device = 4096
+    training.max_steps = 300000
+    training.batch_size_per_device = 8192
 
     # Weighting
     config.weighting = weighting = ml_collections.ConfigDict()
-    weighting.scheme = "grad_norm"
+    weighting.scheme = "ntk"
     weighting.init_weights = ml_collections.ConfigDict({"ics": 1.0, "res": 1.0})
     weighting.momentum = 0.9
     weighting.update_every_steps = 1000
 
     weighting.use_causal = True
     weighting.causal_tol = 0.1
-    weighting.num_chunks = 16
+    weighting.num_chunks = 32
 
     # Logging
     config.logging = logging = ml_collections.ConfigDict()
-    logging.log_every_steps = 100
+    logging.log_every_steps = 500
     logging.log_errors = True
     logging.log_losses = True
     logging.log_weights = True
-    logging.log_preds = True
+    logging.log_preds = False
     logging.log_grads = True
-    logging.log_ntk = True
+    logging.log_ntk = False
     logging.log_nonlinearities = False
 
     # Saving
     config.saving = saving = ml_collections.ConfigDict()
-    saving.save_every_steps = 10000
-    saving.num_keep_ckpts = 5
+    saving.save_every_steps = None
+    saving.num_keep_ckpts = 10
 
+    # Input shape for initializing Flax models
     config.input_dim = 1
+
+    # Integer for PRNG random seed.
     config.seed = 42
 
     return config

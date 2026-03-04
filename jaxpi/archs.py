@@ -543,13 +543,15 @@ def _get_interp_spec(interp_method: str):
 # In jaxpi/archs.py
 
 def interpolate_grid_nd(grid, x, res=None,
-                        attn_mode=(0,0), # Ensure this is a tuple as per previous fix
-                        x_min=None, x_max=None, 
+                        attn_mode=(0,0),
+                        x_min=None, x_max=None,
                         weight_fn=cubic_bspline_weight, offsets=None):
     ndim = len(attn_mode)
     if offsets is None:
-        offsets = jnp.arange(-1, 3)
-    
+        offsets = jnp.arange(-1, 3, dtype=jnp.int32)
+    else:
+        offsets = jnp.asarray(offsets, dtype=jnp.int32)
+
     if x_min is None:
         x_min = jnp.zeros((ndim,))
     if x_max is None:
@@ -561,32 +563,28 @@ def interpolate_grid_nd(grid, x, res=None,
 
     if res is None:
         res = min(grid.shape[:-1])
-    N = jnp.array([res]*ndim)
-    #print(N)
-    gx = x_norm * (N)
-    
-    # Convert tuple to array for the 'add' calculation
-    attn_mode_arr = jnp.array(attn_mode)
-    add = jnp.where(attn_mode_arr == 0, 1, 0)
+    N = jnp.full((ndim,), res, dtype=jnp.int32)
+    gx = x_norm * N.astype(x_norm.dtype)
+
+    attn_mode_arr = jnp.asarray(attn_mode, dtype=jnp.int32)
+    add = jnp.where(attn_mode_arr == 0, 1, 0).astype(gx.dtype)
     gx += add
-    
-    base_idx = jnp.floor(gx)
-    base_idx = base_idx.astype(jnp.int32)
-    #print(base_idx)
-    
+
+    base_idx = jnp.floor(gx).astype(jnp.int32)
+
     dim_weights = []
     dim_coords = []
-    
+
     for d, mode in enumerate(attn_mode):
-        idx_d = base_idx[d] + offsets 
-        dist_d = gx[d] - idx_d
+        idx_d = (base_idx[d] + offsets).astype(jnp.int32)
+        dist_d = gx[d] - idx_d.astype(gx.dtype)
         w_d = weight_fn(dist_d)
-        
-        if mode == 0:  
+
+        if mode == 0:
             c_d = jnp.clip(idx_d, 0, N[d] - 1)
-        else:          
-            c_d = jnp.mod(idx_d, N[d])
-            
+        else:
+            c_d = jnp.mod(idx_d, N[d]).astype(jnp.int32)
+
         dim_weights.append(w_d)
         dim_coords.append(c_d)
 
