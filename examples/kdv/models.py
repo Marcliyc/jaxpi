@@ -106,6 +106,15 @@ class KDV(ForwardIVP):
         return error
 
 
+class KDVTime(KDV):
+    def __init__(self, config, u0, t_star, x_star):
+        super().__init__(config, u0, t_star, x_star)
+
+    def u_net(self, params, t, x):
+        _, u = self.state.apply_fn(params, x, t)
+        return u[0]
+
+
 class KDVEvaluator(BaseEvaluator):
     def __init__(self, config, model):
         super().__init__(config, model)
