@@ -717,14 +717,13 @@ class PINN_Gaussian(nn.Module):
         # X = Gaussian3d_Full(self.num_gaussian, self.grid_range, self.sigmas_range, self.mlp_dim)(x,y,z)
         
         #init = nn.initializers.glorot_normal()
-        for fs in self.features[:-1]:
+        for fs in self.features:
             X = Dense(fs, reparam=self.reparam)(X)
             X = self.activation_fn(X)
-        X = Dense(self.features[-1], reparam=self.reparam)(X)
+        #X = Dense(self.features[-1], reparam=self.reparam)(X)
         if self.pi_init is not None:
             kernel = self.param("pi_init", constant(self.pi_init), self.pi_init.shape)
             y = jnp.dot(X, kernel)
-
         else:
             y = Dense(features=self.out_dim, reparam=self.reparam)(X)
         return X, y

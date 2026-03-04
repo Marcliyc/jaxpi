@@ -48,7 +48,10 @@ def train_and_evaluate(config: ml_collections.ConfigDict, workdir: str):
     if config.get("use_pi_init", False):
         logger.info("Use physics-informed initialization...")
 
-        model = models.AllenCahn(config, u0, t_star, x_star)
+        if 'Time' in config.arch.arch_name:
+            model = models.AllenCahnTime(config, u0, t_star, x_star)
+        else:
+            model = models.AllenCahn(config, u0, t_star, x_star)
         state = jax.device_get(tree_map(lambda x: x[0], model.state))
         params = state.params
 

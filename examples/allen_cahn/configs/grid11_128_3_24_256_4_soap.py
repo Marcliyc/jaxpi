@@ -9,11 +9,12 @@ def get_config():
     # Weights & Biases
     config.wandb = wandb = ml_collections.ConfigDict()
     wandb.project = "PINN-AllenCahn"
-    wandb.name = "grid11_128_3_24_256_4_soap"
+    wandb.name = "grid11_128_3_24_256_4_soap_pi_init_2"
     wandb.tag = None
 
     # Physics-informed initialization
-    config.use_pi_init = False
+    config.use_pi_init = True
+    config.pi_init_type = "linear_pde"
 
     # Arch: Time-Dependent Multi-Res Grid
     config.arch = arch = ml_collections.ConfigDict()
@@ -80,6 +81,7 @@ def get_config():
     logging.log_preds = True        # Turn this ON to see if the grid is learning physically valid sol.
     logging.log_grads = True
     logging.log_ntk = True
+    logging.log_nonlinearities =  False
 
     # Saving
     config.saving = saving = ml_collections.ConfigDict()

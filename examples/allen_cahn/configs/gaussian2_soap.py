@@ -9,11 +9,12 @@ def get_config():
     # Weights & Biases
     config.wandb = wandb = ml_collections.ConfigDict()
     wandb.project = "PINN-AllenCahn"
-    wandb.name = "gaussian2_soap"
+    wandb.name = "gaussian3_soap"
     wandb.tag = None
 
     # Physics-informed initialization
-    config.use_pi_init = False
+    config.use_pi_init = True
+    config.pi_init_type = "initial_condition"
 
     # Arch: Time-Dependent Multi-Res Grid
     config.arch = arch = ml_collections.ConfigDict()
@@ -24,7 +25,7 @@ def get_config():
     arch.num_gaussian = 4000
     arch.sigmas_range = 0.025
     arch.mlp_dim = 1
-    arch.features = [16]
+    arch.features = []
     arch.out_dim = 1
     arch.activation = "tanh"
     arch.pi_init = None
@@ -59,6 +60,7 @@ def get_config():
     optim.warmup_steps = 5000
     optim.grad_accum_steps = 0
     optim.schedule_free = False
+    
     #optim.grad_clip = 5.0
     #optim.weight_decay=1e-5
     #optim.warmup_steps = 1000
@@ -90,6 +92,7 @@ def get_config():
     logging.log_preds = True        # Turn this ON to see if the grid is learning physically valid sol.
     logging.log_grads = True
     logging.log_ntk = True
+    logging.log_nonlinearities = False
 
     # Saving
     config.saving = saving = ml_collections.ConfigDict()

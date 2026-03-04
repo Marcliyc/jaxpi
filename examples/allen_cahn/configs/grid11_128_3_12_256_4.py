@@ -9,11 +9,11 @@ def get_config():
     # Weights & Biases
     config.wandb = wandb = ml_collections.ConfigDict()
     wandb.project = "PINN-AllenCahn"
-    wandb.name = "grid11_128_3_12_256_4"
+    wandb.name = "grid11_128_3_12_256_4_pi_init"
     wandb.tag = None
 
     # Physics-informed initialization
-    config.use_pi_init = False
+    config.use_pi_init = True
 
     # Arch: Time-Dependent Multi-Res Grid
     config.arch = arch = ml_collections.ConfigDict()
@@ -48,6 +48,7 @@ def get_config():
     optim.beta2 = 0.999
     optim.eps = 1e-8
     optim.grad_accum_steps = 0
+    optim.warmup_steps = 0
 
     # Training
     config.training = training = ml_collections.ConfigDict()
