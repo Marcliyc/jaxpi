@@ -10,11 +10,11 @@ def get_config():
     # Weights & Biases
     config.wandb = wandb = ml_collections.ConfigDict()
     wandb.project = "PINN-KDV"
-    wandb.name = "grid_128_3_24_256_4_pi_init"
+    wandb.name = "grid_128_3_24_256_4"
     wandb.tag = None
 
     # Physics-informed initialization
-    config.use_pi_init = True
+    config.use_pi_init = False
     config.pi_init_type = "initial_condition"
 
     # Arch: Time-Dependent Multi-Res Grid
@@ -26,9 +26,9 @@ def get_config():
     arch.pyramid.base_resolution = 128
     arch.pyramid.feature_dim = 24
     arch.pyramid.attn_mode = (1,)
-    arch.pyramid.interp_method = "cubic"
-    arch.pyramid.x_min = -jnp.pi
-    arch.pyramid.x_max = jnp.pi
+    arch.pyramid.interp_method = "quintic"
+    arch.pyramid.x_min = -1.0
+    arch.pyramid.x_max = 1.0
 
     arch.time_embed_dim = 256
     arch.max_period = 2.0
@@ -56,23 +56,23 @@ def get_config():
 
     # Training
     config.training = training = ml_collections.ConfigDict()
-    training.max_steps = 300000
-    training.batch_size_per_device = 8192
+    training.max_steps = 200000
+    training.batch_size_per_device = 4096
 
     # Weighting
     config.weighting = weighting = ml_collections.ConfigDict()
-    weighting.scheme = "ntk"
+    weighting.scheme = "grad_norm"
     weighting.init_weights = ml_collections.ConfigDict({"ics": 1.0, "res": 1.0})
     weighting.momentum = 0.9
     weighting.update_every_steps = 1000
 
     weighting.use_causal = True
     weighting.causal_tol = 0.1
-    weighting.num_chunks = 32
+    weighting.num_chunks = 16
 
     # Logging
     config.logging = logging = ml_collections.ConfigDict()
-    logging.log_every_steps = 500
+    logging.log_every_steps = 100
     logging.log_errors = True
     logging.log_losses = True
     logging.log_weights = True
@@ -84,7 +84,7 @@ def get_config():
     # Saving
     config.saving = saving = ml_collections.ConfigDict()
     saving.save_every_steps = 10000
-    saving.num_keep_ckpts = 20
+    saving.num_keep_ckpts = 5
 
     config.input_dim = 1
     config.seed = 42
