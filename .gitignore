@@ -9,3 +9,5 @@ examples/allen_cahn/grid*
 examples/allen_cahn/gaussian*
 *wandb*
 examples/allen_cahn/train.sh
+examples/kdv/grid*/
+examples/kdv/pirate_soap/

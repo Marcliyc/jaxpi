@@ -28,17 +28,17 @@ def main(argv):
 
     sweep_config = {
         "method": "grid",
-        "name": "grid_sweep_soap",
+        "name": "grid_sweep3",
         "metric": {"goal": "minimize", "name": "l2_error"},
     }
 
     parameters_dict = {
         "seed": {"values": [2]},
-        "base_resolution": {"values": [128]},
-        "num_levels": {"values": [1,3]},
-        "feat_dim": {"values": [96,128]},
-        "time_embed_dim": {"values": [256, 384]},
-        "max_period": {"values": [4.0, 8.0]},
+        "base_resolution": {"values": [128, 256]},
+        "num_levels": {"values": [3,5]},
+        "feat_dim": {"values": [48,96]},
+        "time_embed_dim": {"values": [128, 256]},
+        "max_period": {"values": [2.0]},
         "hidden_multi": {"values": [2,4]},
     }
 

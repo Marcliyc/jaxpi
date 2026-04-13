@@ -11,7 +11,7 @@ def get_config():
     # Weights & Biases
     config.wandb = wandb = ml_collections.ConfigDict()
     wandb.project = "PINN-KDV"
-    wandb.name = "grid_sweep4"
+    wandb.name = "grid_sweep_soap"
     wandb.tag = None
 
     # Physics-informed initialization
@@ -43,7 +43,7 @@ def get_config():
 
     # Optim
     config.optim = optim = ml_collections.ConfigDict()
-    optim.optimizer = "Adam"
+    optim.optimizer = "Soap"
     optim.beta1 = 0.9
     optim.beta2 = 0.999
     optim.eps = 1e-8
@@ -53,7 +53,7 @@ def get_config():
     optim.staircase = False
     optim.warmup_steps = 5000
     optim.grad_accum_steps = 0
-    optim.schedule_free = True
+    optim.schedule_free = False
 
 
     # Training

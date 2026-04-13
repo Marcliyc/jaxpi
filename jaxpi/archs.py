@@ -155,12 +155,12 @@ class FourierTimeEmbedding(nn.Module):
 
     @nn.compact
     def __call__(self, t: float) -> jnp.ndarray:
-        #$t = jnp.atleast_1d(t)[0]
-        #half_dim = self.embed_dim // 2
-        #freqs = jnp.exp(-jnp.log(self.max_period) * jnp.arange(half_dim) / half_dim)
-        #args = t * freqs * 2 * jnp.pi
-        #embedding = jnp.concatenate([jnp.sin(args), jnp.cos(args)])
-        embedding = jnp.atleast_1d(t)
+        t = jnp.atleast_1d(t)[0]
+        half_dim = self.embed_dim // 2
+        freqs = jnp.exp(-jnp.log(self.max_period) * jnp.arange(half_dim) / half_dim)
+        args = t * freqs * 2 * jnp.pi
+        embedding = jnp.concatenate([jnp.sin(args), jnp.cos(args)])
+        #embedding = jnp.atleast_1d(t)
         embedding = Dense(features=self.embed_dim * 2, reparam=self.reparam)(embedding)
         embedding = self.activation_fn(embedding)
         return Dense(features=self.embed_dim, reparam=self.reparam)(embedding)
@@ -564,10 +564,17 @@ def interpolate_grid_nd(grid, x, res=None,
     if res is None:
         res = min(grid.shape[:-1])
     N = jnp.full((ndim,), res, dtype=jnp.int32)
-    gx = x_norm * N.astype(x_norm.dtype)
+    #N = jnp.array([res]*ndim)
+    #print(N)
+    # gx = x_norm * (N)
+    
+    # # Convert tuple to array for the 'add' calculation
+    # attn_mode_arr = jnp.array(attn_mode)
+    # add = jnp.where(attn_mode_arr == 0, 1, 0)
+    gx = x_norm * (N)#.astype(x_norm.dtype)
 
     attn_mode_arr = jnp.asarray(attn_mode, dtype=jnp.int32)
-    add = jnp.where(attn_mode_arr == 0, 1, 0).astype(gx.dtype)
+    add = jnp.where(attn_mode_arr == 0, 1, 0)#.astype(gx.dtype)
     gx += add
 
     base_idx = jnp.floor(gx).astype(jnp.int32)
@@ -576,14 +583,19 @@ def interpolate_grid_nd(grid, x, res=None,
     dim_coords = []
 
     for d, mode in enumerate(attn_mode):
-        idx_d = (base_idx[d] + offsets).astype(jnp.int32)
-        dist_d = gx[d] - idx_d.astype(gx.dtype)
+        idx_d = (base_idx[d] + offsets)#.astype(jnp.int32)
+        dist_d = gx[d] - idx_d#.astype(gx.dtype)
         w_d = weight_fn(dist_d)
 
         if mode == 0:
             c_d = jnp.clip(idx_d, 0, N[d] - 1)
         else:
-            c_d = jnp.mod(idx_d, N[d]).astype(jnp.int32)
+            #print(idx_d, N[d])
+            #c_d = jnp.mod(idx_d, N[d])#.astype(jnp.int32)
+            #c_d = idx_d - N[d] * jnp.floor_divide(idx_d, N[d])#.astype(jnp.int32)
+            period_d = N[d]
+            c_d = jnp.where(idx_d < 0, idx_d + period_d, idx_d)
+            c_d = jnp.where(c_d >= period_d, c_d - period_d, c_d).astype(jnp.int32)
 
         dim_weights.append(w_d)
         dim_coords.append(c_d)
